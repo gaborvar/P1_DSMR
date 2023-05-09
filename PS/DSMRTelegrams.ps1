@@ -9,7 +9,7 @@
 # This is acceptable if error rate is low. For error rates > 10% per telegram (which corresponds less than 0.005% per byte) or larger you probably need to be more sophisticated error handling.
 
 
-$inpLog = "C:\Users\gabor\Documents\GitHub\P1_DSMR\PS\sample P1 meter putty - 20230502.log"
+$inpLog = "P1 meter putty - 20230509.log"
 
 $FinalStat=""
 $telegram=""
@@ -36,9 +36,6 @@ for ($i = 0; $i -lt 65536; $i++) {
 $reader.Close()
 $stream.Close()
 
-
-
-# write-host "Max index after read: $i minus one"
 
 
 

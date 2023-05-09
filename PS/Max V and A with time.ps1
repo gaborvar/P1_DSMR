@@ -3,7 +3,7 @@
 
 
 $inp = $args[0] 
-if ($inp -eq $null) { $inp =  ".\sample P1 meter putty - 20230503.log" }
+if ($inp -eq $null) { $inp =  "P1 meter putty - 20230509.log" }
 
 
 $TmPat = '0-0:1.0.0\((\d+)S\)' # regular expression pattern to match the number
