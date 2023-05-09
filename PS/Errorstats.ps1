@@ -1,8 +1,9 @@
 ﻿
 # Checksum testing
+# this fragment is not operational.
 
 
-$filePath = "C:\Users\gabor\OneDrive\Dokumentumok\KocsagU\NapelemVillany\P1\Sample P1 meter putty - 20230428.log"
+$filePath = "Sample P1 meter putty - 20230428.log"
 $DSMRstream = Get-Content $filePath
 
 $index = 0

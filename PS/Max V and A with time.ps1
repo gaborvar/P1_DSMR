@@ -3,7 +3,7 @@
 
 
 $inp = $args[0] 
-if ($inp -eq $null) { $inp =  "P1 meter putty - 20230509.log" }
+if ($inp -eq $null) { $inp =  "P1 meter putty - 20230510.log" }
 
 
 $TmPat = '0-0:1.0.0\((\d+)S\)' # regular expression pattern to match the number
@@ -16,6 +16,8 @@ $maxA=0
 $BlockTime = ""
 $maxVtime=""
 $maxAtime=""
+$VPhase=""
+$APhase=""
 
 get-content $inp | foreach-object { 
 
@@ -29,6 +31,7 @@ get-content $inp | foreach-object {
         if ($number -gt $maxV) {
             $maxV = $number 
             $maxVtime = $BlockTime
+            $VPhase=$_[4]
         }
     }
 
@@ -38,6 +41,7 @@ get-content $inp | foreach-object {
         if ($number -gt $maxA) {
             $maxA = $number
             $maxAtime = $BlockTime
+            $APhase=$_[4]
         }
     }
     }
@@ -47,5 +51,5 @@ get-content $inp | foreach-object {
 if ( $inp -match "\d{8}" ) { $datefilename = $Matches[0] }
 
 $dayst = $maxVtime.Substring(4,2)
-$SummaryMax = "Maximum voltage: " + $maxv + " V on date " + $maxVtime.Substring(4,2) + " at " + $maxVtime.substring(6,4) + " Max current: " + $maxA + " A at " + $maxAtime.Substring(6,4) + " in log for date "+ $datefilename
+$SummaryMax = "Maximum voltage: " + $maxv +  " V on phase" +$VPhase+ " on date " + $maxVtime.Substring(2,4) + " at " + $maxVtime.substring(6,4) + ".  Max current: " + $maxA + " A at " + $maxAtime.Substring(6,4) + " on phase"+ $APhase + " in log for date "+ $datefilename
 write-output $summaryMax
