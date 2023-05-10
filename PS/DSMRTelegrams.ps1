@@ -9,7 +9,7 @@
 # This is acceptable if error rate is low. For error rates > 10% per telegram (which corresponds less than 0.005% per byte) or larger you probably need to be more sophisticated error handling.
 
 
-$inpLog = "P1 meter putty - 20230509.log"
+$inpLog = "P1 meter putty - 20230510.log"
 
 $FinalStat=""
 $telegram=""
