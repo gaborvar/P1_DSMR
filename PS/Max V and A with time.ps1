@@ -50,6 +50,6 @@ get-content $inp | foreach-object {
 # $maxv = $values | measure-object -maximum  | select-object -expandproperty maximum
 if ( $inp -match "\d{8}" ) { $datefilename = $Matches[0] }
 
-$dayst = $maxVtime.Substring(4,2)
+
 $SummaryMax = "Maximum voltage: " + $maxv +  " V on phase" +$VPhase+ " on date " + $maxVtime.Substring(2,4) + " at " + $maxVtime.substring(6,4) + ".  Max current: " + $maxA + " A at " + $maxAtime.Substring(6,4) + " on phase"+ $APhase + " in log for date "+ $datefilename
 write-output $summaryMax

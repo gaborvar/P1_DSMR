@@ -10,6 +10,8 @@ I use a roughly 10 meter Cat5e cable between the power meter and the electronics
  
 A shared photos of the electronics.
 
+I did some simple error handling in the code to improve reliability of the readings and preserve more data rather than discarding telegrams due to checksum falure. I still experience noise between the meter and the USB interface. Within the limits of the 16 bit checksum mechanism I dont think we can fully alleviate the errors in the transmission. Based on the typical errors my system experiences the program logic checks if the most frequent errors can be corrected. The checksum mechanism employed in DSMR v5 is 16 bit which limits our ability to catch all faulty telegrams. If the meter emits a telegram every 10 seconds it means roughy 9k data transfers daily. The likelyhood of at least one faulty telegram which produces the same checksum as the transmitted original adds up fairly quickly.
+
 
 Useful links (thanks to the authors): 
 
