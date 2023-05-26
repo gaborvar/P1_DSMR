@@ -10,7 +10,7 @@
 
 $global:PerPlusMatches =""
 # $global:FullChksumhistory =""
-$inpLog = "P1 meter putty - 20230519.log"
+$inpLog = "P1 meter putty - 20230525.log"
 $nFixedCks = 0
 $ValidityStats =""  # will store a list of telegrams that failed the checksum test, and the number of charcters that are not expected (i.e. ASCII CRLF or xFF)
 $telegram =""
@@ -198,7 +198,7 @@ switch -regex   ($_) {
             # test if the beginning of the telegram (disregarding the very first byte) is the same as expected, from earlier telegram(s). If so, it is likely that the error only affects the first byte. 
             # If a valid first line is found in a corrupted telegram then we assume this is the beginning of the telegram and ascertain it with an extra checksum calculation. 
 
-            if  ( ($telegram -cmatch $EarlierFirstLine.Substring(1) + $FirstLinesPattern) -and ( ($ChksumTGCorrected = CheckSumFromTG( "/" + $Matches[0])) -eq $senderChksInt )  )  {  # it should ensure that if the comparison throws an error execution ontinues in the right script block.
+            if  ( ($telegram -cmatch $EarlierFirstLine.Substring(1) + $FirstLinesPattern) -and ( ( CheckSumFromTG( "/" + $Matches[0])) -eq $senderChksInt )  )  {  # it should ensure that if the comparison throws an error execution continues in the right script block.
 
             # happiness, proceed to data extraction to TelegramRec after fixing the first byte of $telegram
                 $nFixedCks++
@@ -209,7 +209,7 @@ switch -regex   ($_) {
                 # write-host $telegram
                 # write-host $Matches
         
-                write-host "Telegram fixed. Chksum calculated from input: $CalcChecksum, from corrected: $ChksumTGCorrected  Sent: $senderChksInt, corrected $nFixedCks  old length: $($telegram.Length)"
+                write-host "Telegram fixed. Chksum calculated from input: $CalcChecksum.  Corrected $nFixedCks  old length: $($telegram.Length)"
                 $telegram = "/" + $Matches[0]
  
                 }
@@ -458,7 +458,9 @@ switch -regex   ($_) {
 }
 $outCSV = $inpLog + "-validity.csv"
 Out-File -FilePath $outCSV  -InputObject $ValidityStats
-echo "$nFalseTelegram checksums are still false, $nFixedCks are fixed from $nTelegrams telegrams in $inpLog"
+
+$rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
+echo "$nFalseTelegram checksums are still false. Rate of error: $rateFalse %. $nFixedCks of $nTelegrams telegrams are fixed in $inpLog"
 
 Out-File -FilePath ($inpLog + ".Noise.csv")  -InputObject $errorlog
 
