@@ -43,6 +43,11 @@ Sharing photos of the preliminary electronics.
 I do some error handling in the code to improve reliability of the readings and preserve more data rather than discarding full telegrams due to checksum falure. I still experience noise between the meter and the USB interface. Based on the typical errors (failure modes) that affect my system, the logic checks for the most frequent errors and corrects the telegram. I can catch and correct 50-90% of the errors with this mechanism. The checksum method employed in DSMR v5 is 16 bit which limits our ability to catch all faulty telegrams: If the meter emits a telegram every 10 seconds it means roughy 9k data transfers daily. The likelyhood of at least one faulty telegram which produces the same checksum as the transmitted original adds up fairly quickly.
 
 
+**Usage**
+
+DSMRTelegrams.ps1 script is the main module.
+First run PrepareChecksumLookup.ps1 which precalculates an array for checksum computing. It creates ChksumLookup.bin that DSMRTelegrams.ps1 relies on. 
+
 
 **Useful links (many thanks to the authors!):** 
 
