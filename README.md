@@ -47,14 +47,17 @@ I do some error handling in the code to improve reliability of the readings and 
 **Useful links (many thanks to the authors!):** 
 
 https://github.com/matthijskooijman/arduino-dsmr
+
 https://github.com/matthijskooijman/arduino-dsmr/tree/master/src/dsmr
 
 https://www.ztatz.nl/
 
 https://github.com/sza2/esp01p1dsmr
 
-(in Hungarian) 
+(in Hungarian:) 
+
 https://www.eon.hu/content/dam/eon/eon-hungary/documents/Lakossagi/aram/muszaki-ugyek/p1_port%20felhaszn_interfesz_taj_%2020230210.pdf
+
 https://hup.hu/node/173041
 
 
