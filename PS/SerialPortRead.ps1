@@ -1,5 +1,5 @@
 ﻿
-$inpLog = "C:\Users\gabor\OneDrive\Dokumentumok\KocsagU\NapelemVillany\P1\Sample P1 meter putty - 20230428.log"
+$inpLog = "Sample P1 meter putty - 20230428.log"
 # Specify the serial port settings
 $port = new-Object System.IO.Ports.SerialPort COM3,115200,None,8,one
 

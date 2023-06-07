@@ -45,8 +45,10 @@ I do some error handling in the code to improve reliability of the readings and 
 
 **Usage**
 
-DSMRTelegrams.ps1 script is the main module.
-First run PrepareChecksumLookup.ps1 which precalculates an array for checksum computing. It creates ChksumLookup.bin that DSMRTelegrams.ps1 relies on. 
+DSMRTelegrams.ps1 script is the main module. 
+Change the name of the input file in line ' $inpLog = "P1 meter putty - 20230605.log" ' 
+Run it in the same directory where the serial log file is located. 
+
 
 
 **Useful links (many thanks to the authors!):** 

@@ -1,21 +1,41 @@
-﻿
-# DSMR P1 telegram from log file, checking checksums for each telegram. No parsing within telegram except timestamp extraction.
+﻿# Reads DSMR P1 telegrams from the serial log file. Relevant fields of the telegrams are written to a CSV (separator is semicolon) file as a table of records. 
+# Prevents invalid data by checking for errors in the telegrams and either fixing them or dropping if a fix would be too complex.
 # Calculates checksum from each telegram and writes TRUE for a match or FALSE for incorrect checksum to a CSV file.
 # Takes several minutes to process a daily worth of (24x360) telegrams. File operations could be optimised.
 # CSV output is intended to be processed by Excel. See charts separately. 
-# Can be extended with further parsing of the telegrams.
+# Can be extended with further parsing of the telegrams. Currently it :
+    # checks for voltage above regulated leves and marks the record. 
+    # checks for current over a certain level and marks the record if above.
+    # calculates power (kW) from the increment in the energy meter (kWh) and stores in a separate field. This is useful to valadate if the power field is characteristic of the full 10 sec interval.
 
-# Does not yet handle errors within telegrams with failed checksums. E.g. timestamp may be occasionally incorrect, blurring stats. 
-# This is acceptable if error rate is low. For error rates > 10% per telegram (which corresponds less than 0.005% per byte) or larger you probably need to be more sophisticated error handling.
+# It detects communication errors and fixes certain frequently occurring error types. Additional correctable errors could be added to the error correction capabilities. 
+        # E.g. timestamp may be occasionally incorrect, blurring stats if the noise hit the line holding the timestamp in the telegram. 
+        # Timestamp could be calculated from the previous and the next telegram's timestamp. (not implemented)
+# This is acceptable if error rate is low. For error rates > 10% per telegram (which corresponds less than 0.005% per byte) or larger you probably need more sophisticated error handling.
 
-$global:PerPlusMatches =""
+# $global:PerPlusMatches =""
 # $global:FullChksumhistory =""
-$inpLog = "P1 meter putty - 20230525.log"
+
+
+$inpLog = "P1 meter putty - 20230605.log"   # This is the input file that holds the log of the full serial communication from the meter.
+# $loc = Get-Location
+# echo $loc.Path
+# echo $PSScriptRoot
+
+# if ($psISE -ne $null) {
+#    $defaultDirectory = $psISE.CurrentPowerShellTab.Path
+#    Set-Location -Path $defaultDirectory
+# }
+
 $nFixedCks = 0
-$ValidityStats =""  # will store a list of telegrams that failed the checksum test, and the number of charcters that are not expected (i.e. ASCII CRLF or xFF)
+$ValidityStats =""  # will store a list of telegrams that failed the checksum test, and the number of characters that are not expected (i.e. ASCII CRLF or xFF)
 $telegram =""
-$earlierfirstline = "/AUX59902759988"   # initialization value for a valid first line. Used for error correction. It is a valid first line but may not be correct, depending on the meter's choice of headers.
-    #  It will be replaced with a correct first line in the feed so other meters with differrnt first line (meter ID in cluded) can also benefit from error correction.
+
+
+$earlierfirstline = "/AUX59902759988"   # initialization value for a valid first line. Used for error correction. 
+    # This is a valid first line but may not be useful in the specific application, depending on the meter's choice of header. 
+    # You may want to (but not necessary for error correction to work) replace this with the first line that your meter emits. 
+    # It will be superseded with a correct first line taken from the feed so other meters with different first line can also benefit from error correction.
 
 
 $telegramPrevkWhIn = $null
@@ -121,23 +141,72 @@ $telegramRecords = New-Object System.Collections.Generic.List[DSMRTelegramRecord
    $MaxATime = ""
    $MaxVTime = ""
 
-#[uint16]$chksum = 0
+# [uint16]$chksum = 0
+# [uint16]$c = 0
+# [byte]$i = 0
+
+
+############################################################################################################################################
+
+
+# This routine creates a table which will be used to determine the updated checksum value given a new byte in the stream. It creates a lookup table (vector). 
+
+# input: each of the possible checksum values i.e. from 0 to xFFFF 
+# assumption: the new byte in the stream that should update the checksum is zero. At run time we will adjust the index into this vector to accommodate all 255 other data points. 
+# output: a vector (one dimensional array) of uint16 numbers, each is the updated checksum assuming the old checksum is the index and the incoming data point is zero.
+# 65536 uint16 data points as checksum values are 16 bit 
+
+
+# note: We can cover all 65536 x 256 combinations of checksum and incoming data with just one vector. At run time the checksum needs to be XOR-ed with the incoming byte to calculate the correct index for the incoming byte.
 
 
 
-$stream = New-Object System.IO.FileStream("ChksumLookup.bin", [System.IO.FileMode]::Open)
-$reader = New-Object System.IO.BinaryReader($stream)
+
+    # Create an array with 65536 elements
 
 $ChksumLookup = New-Object uint16[](65536)
 
+$execTime = Get-Date
 
-for ($i = 0; $i -lt 65536; $i++) {
-    $ChksumLookup[$i] = $reader.ReadUInt16()
-}
+    for ( $c=0; $c -le 65535; $c++) {
 
-$reader.Close()
-$stream.Close()
+            # checksum algorithm begins
 
+        $chksum = $c   ##   Should be:   $c -bxor 0   but it equals $c
+
+            for ($i = 0; $i -lt 8; $i++) {
+                if ($chksum -band 1) {
+                    $chksum = ($chksum -shr 1) -bxor 0xA001
+                } else {
+                    $chksum = $chksum -shr 1
+                }
+            }
+
+    #        echo $c
+       $ChksumLookup[$c] = $chksum
+        
+    }
+
+
+# Alternatively, we can import the array from file. Not needed any more.
+
+# $stream = New-Object System.IO.FileStream("C:\Users\gabor\OneDrive\Dokumentumok\KocsagU\NapelemVillany\P1\ChksumLookup.bin", [System.IO.FileMode]::Open)
+# $reader = New-Object System.IO.BinaryReader($stream)
+
+# $ChksumLookup = New-Object uint16[](65536)
+
+
+# for ($i = 0; $i -lt 65536; $i++) {
+#    $ChksumLookup[$i] = $reader.ReadUInt16()
+# }
+
+# $reader.Close()
+# $stream.Close()
+
+$execTime = $(get-date) - $execTime
+Write-host "Checksum table prepared in $execTime"
+
+##############################################################################################################################################
 
 
 
@@ -338,7 +407,7 @@ switch -regex   ($_) {
 
 
 
-            # Convert the timedate field string of the telegram into time. This will be used only fro internal stuff. Output will use the original OBIS/COSEM format.
+            # Convert the timedate field string of the telegram into time. This will be used only for internal stuff. Output will use the original OBIS/COSEM format.
 
          
 
@@ -457,15 +526,18 @@ switch -regex   ($_) {
 
 }
 $outCSV = $inpLog + "-validity.csv"
-Out-File -FilePath $outCSV  -InputObject $ValidityStats
+Out-File -FilePath $outCSV  -InputObject $ValidityStats   # this output file holds a record for each telegram whether correct or not. 
+    # For erroneous (not corrected) telegrams it provides the number of unexpected chars (minimum number as it does not attempt to find all incorrect chars.)
+    # for corrected records it includes how many errors were corrected from the beginning of the file. 
+    # for untouched records it is zero.
 
 $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
 echo "$nFalseTelegram checksums are still false. Rate of error: $rateFalse %. $nFixedCks of $nTelegrams telegrams are fixed in $inpLog"
 
-Out-File -FilePath ($inpLog + ".Noise.csv")  -InputObject $errorlog
+Out-File -FilePath ($inpLog + ".Noise.csv")  -InputObject $errorlog   # this is an error log file. Only reports when an incoming telegram whad errors
 
 # out-file -FilePath ($inpLog+".txt") -inputobject $telegramRecords
-$telegramRecords | Export-Csv -Path ($inpLog+"_Records.csv") -NoTypeInformation -UseCulture
+$telegramRecords | Export-Csv -Path ($inpLog+"_Records.csv") -NoTypeInformation -UseCulture  # this is the main output file with "_Records.csv" appended to the input file name
 
 if ( $maxVtime -and $maxATime )
     {
