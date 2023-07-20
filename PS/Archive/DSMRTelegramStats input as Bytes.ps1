@@ -27,9 +27,11 @@ $Amp3Pat = '1-0:31.7.0\((\d+)\*A\)' # regular expression pattern to match the nu
 $Amp5Pat = '1-0:51.7.0\((\d+)\*A\)' # regular expression pattern to match the number
 $Amp7Pat = '1-0:71.7.0\((\d+)\*A\)' # regular expression pattern to match the number
 
-$kWPat = '1-0:1.7.0\((\d+\.\d+)\*kW\)' # regular expression pattern to match the number
+$kWInPat  = '1-0:1.7.0\((\d+\.\d+)\*kW\)' # regular expression pattern to match the number
+$kWOutPat = '1-0:2.7.0\((\d+\.\d+)\*kW\)' # regular expression pattern to match the number
 
-$kWhInPat = '1-0:1.8.0\((\d+\.\d+)\*kWh\)'
+$kWhInPat  = '1-0:1.8.0\((\d+\.\d+)\*kWh\)'
+$kWhOutPat = '1-0:2.8.0\((\d+\.\d+)\*kWh\)'
 
 $errorlog ="Timestamp,Position,NoisyChar,`r`n" 
 
@@ -39,14 +41,16 @@ Add-type @"
 public class DSMRTelegramRecordType {
     public string timeString ;
     public double kWhIn ;
+    public double kWhOut ;
     public float Voltage3 ;
     public float Voltage5 ;
     public float Voltage7 ;
     public int Amp3 ;
     public int Amp5 ;
     public int Amp7 ;
-    public float kW ;
-    public float kWfromConsumption ;
+    public float kWIn ;
+    public float kWOut ;
+    public float kWInfromConsumption ;
     public string VoltStress ;
     public string AmpStress ;
 }
@@ -116,8 +120,9 @@ function UpdateStats ($StartIndex, $EndIndex) {
                 Amp3 = [int]::MinValue
                 Amp5 = [int]::MinValue
                 Amp7 = [int]::MinValue
-                kW = [float]::MinValue
-                kWfromConsumption = [float]::NaN
+                kWIn = [float]::MinValue
+                kWOut = [float]::MinValue
+                kWInfromConsumption = [float]::NaN
                 VoltStress = ""
                 AmpStress = ""
             }
@@ -178,15 +183,15 @@ function UpdateStats ($StartIndex, $EndIndex) {
 
                 if ( ($TelegramTime.subtract($TelegramPrevkWhInTime)).totalseconds -lt 15 )   {
 
-                    $TelegramRec.kWfromConsumption = ( $TelegramRec.kWhIn - $TelegramPrevkWhIn ) * 360  # Assuming that each telegram is 10 seconds apart, calculating power from energy by deviding energy with time (1/360 hours)
+                    $TelegramRec.kWInfromConsumption = ( $TelegramRec.kWhIn - $TelegramPrevkWhIn ) * 360  # Assuming that each telegram is 10 seconds apart, calculating power from energy by deviding energy with time (1/360 hours)
                     }
                         else {
-                        $TelegramRec.kWfromConsumption = [float]::NaN
+                        $TelegramRec.kWInfromConsumption = [float]::NaN
                         }
 
                 }  
                 else {
-                    $TelegramRec.kWfromConsumption = [float]::NaN
+                    $TelegramRec.kWInfromConsumption = [float]::NaN
                     }
 
 

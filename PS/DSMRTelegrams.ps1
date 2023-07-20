@@ -4,28 +4,19 @@
 # Takes several minutes to process a daily worth of (24x360) telegrams. File operations could be optimised.
 # CSV output is intended to be processed by Excel. See charts separately. 
 # Can be extended with further parsing of the telegrams. Currently it :
-    # checks for voltage above regulated leves and marks the record. 
+    # checks for voltage above regulated levels and marks the record. 
     # checks for current over a certain level and marks the record if above.
-    # calculates power (kW) from the increment in the energy meter (kWh) and stores in a separate field. This is useful to valadate if the power field is characteristic of the full 10 sec interval.
+    # calculates power (kW) from the increment in the energy meter (kWh) and stores in a separate field. This is useful to validate if the power field is characteristic of the full 10 sec interval.
 
 # It detects communication errors and fixes certain frequently occurring error types. Additional correctable errors could be added to the error correction capabilities. 
         # E.g. timestamp may be occasionally incorrect, blurring stats if the noise hit the line holding the timestamp in the telegram. 
         # Timestamp could be calculated from the previous and the next telegram's timestamp. (not implemented)
 # This is acceptable if error rate is low. For error rates > 10% per telegram (which corresponds less than 0.005% per byte) or larger you probably need more sophisticated error handling.
 
-# $global:PerPlusMatches =""
-# $global:FullChksumhistory =""
 
 
-$inpLog = "P1 meter putty - 20230605.log"   # This is the input file that holds the log of the full serial communication from the meter.
-# $loc = Get-Location
-# echo $loc.Path
-# echo $PSScriptRoot
+$inpLog = "P1 meter putty - 20230717.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
-# if ($psISE -ne $null) {
-#    $defaultDirectory = $psISE.CurrentPowerShellTab.Path
-#    Set-Location -Path $defaultDirectory
-# }
 
 $nFixedCks = 0
 $ValidityStats =""  # will store a list of telegrams that failed the checksum test, and the number of characters that are not expected (i.e. ASCII CRLF or xFF)
@@ -49,45 +40,45 @@ $FirstLinesPattern = "\r\n\r\n0-0:1\.0\.0\([\s\S]*$" # This is the regex that ma
     # This will be used to test if a checkum-failed telegram actually has healthy beginning except for the first byte. 
     # The first byte is the most prone to transmission errors. It fortunately is easy to guess (/)
 
-$VoltPat = '1-0:[357]2.7.0\((\d+\.\d+)\*V\)' # regular expression pattern to match the number
-$AmpPat = '1-0:[357]1.7.0\((\d+)\*A\)' # regular expression pattern to match the number
+# $VoltPat = '1-0:[357]2.7.0\((\d+\.\d+)\*V\)' # regular expression pattern to match any of the 3 voltages
+# $AmpPat = '1-0:[357]1.7.0\((\d+)\*A\)' # regular expression pattern to match any amps
 
 $Volt3Pat = '1-0:32.7.0\((\d+\.\d+)\*V\)' # regular expression pattern to match voltage for phase 3
 $Volt5Pat = '1-0:52.7.0\((\d+\.\d+)\*V\)' # regular expression pattern to match voltage for phase 5
-$Volt7Pat = '1-0:72.7.0\((\d+\.\d+)\*V\)' # regular expression pattern to match the number
+$Volt7Pat = '1-0:72.7.0\((\d+\.\d+)\*V\)' # regular expression pattern to match voltage for phase 7
 
-$Amp3Pat = '1-0:31.7.0\((\d+)\*A\)' # regular expression pattern to match the number
-$Amp5Pat = '1-0:51.7.0\((\d+)\*A\)' # regular expression pattern to match the number
-$Amp7Pat = '1-0:71.7.0\((\d+)\*A\)' # regular expression pattern to match the number
+$Amp3Pat = '1-0:31.7.0\((\d+)\*A\)' # regular expression pattern to match amps
+$Amp5Pat = '1-0:51.7.0\((\d+)\*A\)' # regular expression pattern to match amps
+$Amp7Pat = '1-0:71.7.0\((\d+)\*A\)' # regular expression pattern to match amps
 
-$kWPat = '1-0:1.7.0\((\d+\.\d+)\*kW\)' # regular expression pattern to match the number
+$kWInPat  = '1-0:1.7.0\((\d+\.\d+)\*kW\)' # regular expression pattern to match the power consumption
+$kWOutPat = '1-0:2.7.0\((\d+\.\d+)\*kW\)' # regular expression pattern to match the power to the grid
 
-$kWhInPat = '1-0:1.8.0\((\d+\.\d+)\*kWh\)'
+$kWhInPat  = '1-0:1.8.0\((\d+\.\d+)\*kWh\)'   # regular exp to match total energy incoming from grid
+$kWhOutPat = '1-0:2.8.0\((\d+\.\d+)\*kWh\)'         # ... energy export to grid
 
 $global:errorlog ="Timestamp,Position,NoisyChar,`r`n" 
 
 
-# custom type to log athe relevant fields of the telegram
-
-# [System.Management.Automation.PSTypeName]::
-
-Add-type @" 
-public class DSMRTelegramRecordType {
-    public string timeString ;
-    public double kWhIn ;
-    public float Voltage3 ;
-    public float Voltage5 ;
-    public float Voltage7 ;
-    public int Amp3 ;
-    public int Amp5 ;
-    public int Amp7 ;
-    public float kW ;
-    public float kWfromConsumption ;
-    public string VoltStress ;
-    public string AmpStress ;
-    public string kWStress ;
+# Add-type @"     # removed dependency on .net type definition and replaced with class 
+class DSMRTelegramRecordType {
+    [string]$timeString
+    [double]$kWhIn
+    [double]$kWhOut
+    [float]$Voltage3
+    [float]$Voltage5
+    [float]$Voltage7
+    [int]$Amp3
+    [int]$Amp5
+    [int]$Amp7
+    [float]$kWIn
+    [float]$kWOut
+    [float]$kWInfromConsumption   # this is a calculated field: power calculated from the cumulative energy reading
+    [string]$VoltStress
+    [string]$AmpStress
+    [string]$kWStress
 }
-"@ 
+#"@ 
 
 Function CheckSumFromTG($tlgr)  {
         [uint16]$chksum=0
@@ -134,12 +125,10 @@ Function CheckSumFromTG($tlgr)  {
 # create an array of records
 $telegramRecords = New-Object System.Collections.Generic.List[DSMRTelegramRecordType]
 
-#$telegramRecords = @( [DSMRTelegramRecordType]$null
-#)
    [float] $maxV = 0 
-   [int] $maxA = 0
-   $MaxATime = ""
-   $MaxVTime = ""
+   [int]   $maxA = 0
+   $MaxAtime = ""
+   $MaxVtime = ""
 
 # [uint16]$chksum = 0
 # [uint16]$c = 0
@@ -253,7 +242,7 @@ switch -regex   ($_) {
         $ValidityStats += $timestamp + "," 
         $ErrorCorrected = 0
         $nTelegrams ++
-        [uint16]$ChksumTGCorrected = 0
+        # [uint16]$ChksumTGCorrected = 0
         
         if ($senderChksInt -ne $CalcChecksum ) { # if checksums do not match handle the error here by trying to substitute suspect bytes. Otherwise skip forward to process telegram into a record.
 
@@ -300,7 +289,7 @@ switch -regex   ($_) {
             $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
             $errorlog += $timestamp
 
-            echo "Chksum error at $timestamp, rate of error: $rateFalse %  or $nFalseTelegram"            
+            Write-Output "Chksum error at $timestamp, rate of error: $rateFalse %  or $nFalseTelegram"            
 
 
             $pattern = '[\x00-\x09\x0B-\x0C\x0E-\x1F\x80-\xFE]'   # matches non-ASCII characters except xFF, CR and LF. These are not expected in a DSMR telegram. (except perhaps the service provider message) 
@@ -349,19 +338,21 @@ switch -regex   ($_) {
                 }
 
             # create a single record 
-            $telegramRec = [DSMRTelegramRecordType] @{
-                kWhIn = [double]::NaN
-                Voltage3 = [float]::NaN
-                Voltage5 = [float]::NaN
-                Voltage7 = [float]::NaN
-                Amp3 = [int]::MinValue
-                Amp5 = [int]::MinValue
-                Amp7 = [int]::MinValue
-                kW = [float]::MinValue
-                kWfromConsumption = [float]::NaN
-                VoltStress = ""
-                AmpStress = ""
-            }
+            $telegramRec = [DSMRTelegramRecordType]::new()     # @{
+                $telegramRec.kWhIn  = [double]::NaN
+                $telegramRec.kWhOut = [double]::NaN
+                $telegramRec.Voltage3 = [float]::NaN
+                $telegramRec.Voltage5 = [float]::NaN
+                $telegramRec.Voltage7 = [float]::NaN
+                $telegramRec.Amp3 = [int]::MinValue
+                $telegramRec.Amp5 = [int]::MinValue
+                $telegramRec.Amp7 = [int]::MinValue
+                $telegramRec.kWIn = [float]::MinValue
+                $telegramRec.kWOut = [float]::MinValue
+                $telegramRec.kWInfromConsumption = [float]::NaN
+                $telegramRec.VoltStress = ""
+                $telegramRec.AmpStress = ""
+            #  }
 
 
 
@@ -371,6 +362,8 @@ switch -regex   ($_) {
                     }
 
                 $kWhInPat {  $TelegramRec.kWhIn = [double]$Matches[1] # convert the matched string to a double
+                    }
+                $kWhOutPat {  $TelegramRec.kWhOut = [double]$Matches[1] # convert the matched string to a double
                     }
 
                 $volt3pat {  
@@ -398,10 +391,14 @@ switch -regex   ($_) {
                     if ($TelegramRec.Amp7 -gt 16) { $telegramrec.AmpStress += "7" }
                     }
 
-                $kWPat { $TelegramRec.kW = [float]$Matches[1] # convert the matched string to a float
-                    if ($TelegramRec.kW -gt 4400) { $telegramrec.kWStress = $true }
+         
+                $kWInPat { $TelegramRec.kWIn = [float]$Matches[1] # convert the matched string to a float
+                    if ($TelegramRec.kWIn -gt 4400) { $telegramrec.kWStress = $true }
                     }
-
+                $kWOutPat { $TelegramRec.kWOut = [float]$Matches[1] # convert the matched string to a float
+                    if ($TelegramRec.kWOut -gt 4400) { $telegramrec.kWStress = $true }
+                    }
+    
                 } 
 
 
@@ -429,15 +426,15 @@ switch -regex   ($_) {
 
                 if ( ($TelegramTime.subtract($TelegramPrevkWhInTime)).totalseconds -lt 15 )   {   # when switching from and to daylight saving time a record may be lost.
 
-                    $TelegramRec.kWfromConsumption = ( $TelegramRec.kWhIn - $TelegramPrevkWhIn ) * 360  # Assuming that each telegram is 10 seconds apart, calculating power from energy by deviding energy with time (1/360 hours)
+                    $TelegramRec.kWInfromConsumption = ( $TelegramRec.kWhIn - $TelegramPrevkWhIn ) * 360  # Assuming that each telegram is 10 seconds apart, calculating power from energy by deviding energy with time (1/360 hours)
                     }
                         else {
-                        $TelegramRec.kWfromConsumption = [float]::NaN
+                        $TelegramRec.kWInfromConsumption = [float]::NaN
                         }
 
                 }  
                 else {
-                    $TelegramRec.kWfromConsumption = [float]::NaN
+                    $TelegramRec.kWInfromConsumption = [float]::NaN
                     }
 
 
@@ -446,23 +443,23 @@ switch -regex   ($_) {
 
             if ( $TelegramRec.Voltage3 -ge $maxV ) {
 
-                $maxv = $telegramRec.Voltage3
-                $MaxVTime = $Timestamp
+                $maxV = $telegramRec.Voltage3
+                $MaxVtime = $Timestamp
                 $TelegramRec.VoltStress += "3"
                 }
 
 
             if ( $TelegramRec.Voltage5 -ge $maxV ) {
 
-                $maxv = $telegramRec.Voltage5
-                $MaxVTime = $Timestamp
+                $maxV = $telegramRec.Voltage5
+                $MaxVtime = $Timestamp
                 $TelegramRec.VoltStress += "5"
                 }
 
             if ( $TelegramRec.Voltage7 -ge $maxV ) {
 
-                $maxv = $telegramRec.Voltage7
-                $MaxVTime = $Timestamp
+                $maxV = $telegramRec.Voltage7
+                $MaxVtime = $Timestamp
                 $TelegramRec.VoltStress += "7"
                 }
 
@@ -471,7 +468,7 @@ switch -regex   ($_) {
             if ( $TelegramRec.Amp3 -ge $maxA ) {
 
                 $maxA = $telegramRec.Amp3
-                $MaxATime = $Timestamp
+                $MaxAtime = $Timestamp
                 $TelegramRec.AmpStress += "3"
                 }
 
@@ -479,20 +476,20 @@ switch -regex   ($_) {
             if ( $TelegramRec.Amp5 -ge $maxA ) {
 
                 $maxA = $telegramRec.Amp5
-                $MaxATime = $Timestamp
+                $MaxAtime = $Timestamp
                 $TelegramRec.AmpStress += "5"
                 }
 
             if ( $TelegramRec.Amp7 -ge $maxA ) {
 
                 $maxA = $telegramRec.Amp7
-                $MaxATime = $Timestamp
+                $MaxAtime = $Timestamp
                 $TelegramRec.AmpStress += "7"
                 }
 
 
 
-            $telegramrecords += $telegramRec   #.psobject.Copy()
+            $telegramRecords.Add($telegramRec)   #.psobject.Copy()
 
 
             
@@ -532,15 +529,15 @@ Out-File -FilePath $outCSV  -InputObject $ValidityStats   # this output file hol
     # for untouched records it is zero.
 
 $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
-echo "$nFalseTelegram checksums are still false. Rate of error: $rateFalse %. $nFixedCks of $nTelegrams telegrams are fixed in $inpLog"
+Write-Output "$nFalseTelegram checksums are still false. Rate of error: $rateFalse %. $nFixedCks of $nTelegrams telegrams are fixed in $inpLog"
 
 Out-File -FilePath ($inpLog + ".Noise.csv")  -InputObject $errorlog   # this is an error log file. Only reports when an incoming telegram whad errors
 
 # out-file -FilePath ($inpLog+".txt") -inputobject $telegramRecords
 $telegramRecords | Export-Csv -Path ($inpLog+"_Records.csv") -NoTypeInformation -UseCulture  # this is the main output file with "_Records.csv" appended to the input file name
 
-if ( $maxVtime -and $maxATime )
+if ( $MaxVtime -and $MaxAtime )
     {
             #  $SummaryMax = 
-    write-output ("Maximum voltage: " + $maxV +  " on date " + $maxVtime.Substring(2,4) + " at " + $maxVtime.substring(6,4) + ".  Max current: " + $maxA + " A at " + $maxAtime.Substring(6,4) + " in log '"+ $inpLog +"'")
+    write-output ("Maximum voltage: " + $maxV +  " on date " + $MaxVtime.Substring(2,4) + " at " + $MaxVtime.substring(6,4) + ".  Max current: " + $maxA + " A at " + $MaxAtime.Substring(6,4) + " in log '"+ $inpLog +"'")
     }
