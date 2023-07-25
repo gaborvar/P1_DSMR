@@ -74,6 +74,7 @@ class DSMRTelegramRecordType {
     [float]$kWIn
     [float]$kWOut
     [float]$kWInfromConsumption   # this is a calculated field: power calculated from the cumulative energy reading
+    [float]$TotalAmp            # calculated field: total current based on power in/out and voltage on all 3 phases
     [string]$VoltStress
     [string]$AmpStress
     [string]$kWStress
@@ -350,6 +351,7 @@ switch -regex   ($_) {
                 $telegramRec.kWIn = [float]::MinValue
                 $telegramRec.kWOut = [float]::MinValue
                 $telegramRec.kWInfromConsumption = [float]::NaN
+                $telegramRec.TotalAmp = [float]::NaN
                 $telegramRec.VoltStress = ""
                 $telegramRec.AmpStress = ""
             #  }
@@ -440,6 +442,21 @@ switch -regex   ($_) {
 
             $TelegramPrevkWhInTime = $TelegramTime
             $TelegramPrevkWhIn = $TelegramRec.kWhIn
+
+
+    # Alleviate the low precision of current readings by looking at the power and voltage. 
+    # P1 port amper readings are rounded to integer and do not show the direction of the energy flow per phase. 
+
+            if ( $telegramRec.kWOut -eq 0)  {       # unfortunately we can calculate useful statistics only if each phase transfers energy in the same direction a the other two. 
+                $telegramRec.TotalAmp =  - $Telegramrec.kWIn / ($telegramRec.Voltage3 + $TelegramRec.Voltage5 + $TelegramRec.Voltage7) * 3 * 1000  # calculate P/U, using the average of U per phase
+                }               #   negative TotalAmp means consuming from grid.
+
+            elseif ( $telegramRec.kWIn -eq 0) {     # No consumption from grid
+                $telegramRec.TotalAmp = $Telegramrec.kWOut / ($telegramRec.Voltage3 + $TelegramRec.Voltage5 + $TelegramRec.Voltage7) * 3 * 1000  # calculate P/U, using the average of U per phase
+                }                #  Positive TotalAmp means feeding to grid.
+
+                #        precision could be increased by factoring in the reactive power. Subject to future work.
+
 
             if ( $TelegramRec.Voltage3 -ge $maxV ) {
 
