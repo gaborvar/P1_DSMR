@@ -15,7 +15,7 @@
 
 
 
-$inpLog = "P1 meter putty - 20230717.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20230825.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0
@@ -68,9 +68,9 @@ class DSMRTelegramRecordType {
     [float]$Voltage3
     [float]$Voltage5
     [float]$Voltage7
-    [int]$Amp3
-    [int]$Amp5
-    [int]$Amp7
+    [int]$Amp3                  # EON P1 truncates the reading to integer.
+    [int]$Amp5                  # EON P1 truncates the reading to integer.
+    [int]$Amp7                  # EON P1 truncates the reading to integer.
     [float]$kWIn
     [float]$kWOut
     [float]$kWInfromConsumption   # this is a calculated field: power calculated from the cumulative energy reading
@@ -447,12 +447,12 @@ switch -regex   ($_) {
     # Alleviate the low precision of current readings by looking at the power and voltage. 
     # P1 port amper readings are rounded to integer and do not show the direction of the energy flow per phase. 
 
-            if ( $telegramRec.kWOut -eq 0)  {       # unfortunately we can calculate useful statistics only if each phase transfers energy in the same direction a the other two. 
-                $telegramRec.TotalAmp =  - $Telegramrec.kWIn / ($telegramRec.Voltage3 + $TelegramRec.Voltage5 + $TelegramRec.Voltage7) * 3 * 1000  # calculate P/U, using the average of U per phase
+            if ( $telegramRec.kWOut -eq 0)  {       # unfortunately we can calculate useful statistics only if each phase transfers energy in the same direction as the other two. 
+                $telegramRec.TotalAmp =  - $Telegramrec.kWIn / ($telegramRec.Voltage3 + $TelegramRec.Voltage5 + $TelegramRec.Voltage7) * 3 * 1000  # calculate P/U, using the average of U per phase.  Reactive power not accounted for.
                 }               #   negative TotalAmp means consuming from grid.
 
             elseif ( $telegramRec.kWIn -eq 0) {     # No consumption from grid
-                $telegramRec.TotalAmp = $Telegramrec.kWOut / ($telegramRec.Voltage3 + $TelegramRec.Voltage5 + $TelegramRec.Voltage7) * 3 * 1000  # calculate P/U, using the average of U per phase
+                $telegramRec.TotalAmp = $Telegramrec.kWOut / ($telegramRec.Voltage3 + $TelegramRec.Voltage5 + $TelegramRec.Voltage7) * 3 * 1000  # calculate P/U, using the average of U per phase. Reactive power not accounted for.
                 }                #  Positive TotalAmp means feeding to grid.
 
                 #        precision could be increased by factoring in the reactive power. Subject to future work.
