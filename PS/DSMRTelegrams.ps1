@@ -15,7 +15,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20230825.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20231005.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0
@@ -156,7 +156,7 @@ $telegramRecords = New-Object System.Collections.Generic.List[DSMRTelegramRecord
 
 $ChksumLookup = New-Object uint16[](65536)
 
-$execTime = Get-Date
+# $execTime = Get-Date
 
     for ( $c=0; $c -le 65535; $c++) {
 
@@ -193,8 +193,8 @@ $execTime = Get-Date
 # $reader.Close()
 # $stream.Close()
 
-$execTime = $(get-date) - $execTime
-Write-host "Checksum table prepared in $execTime"
+# $execTime = $(get-date) - $execTime
+# Write-host "Checksum table prepared in $execTime"
 
 ##############################################################################################################################################
 
@@ -268,7 +268,7 @@ switch -regex   ($_) {
                 # write-host $telegram
                 # write-host $Matches
         
-                write-host "Telegram fixed. Chksum calculated from input: $CalcChecksum.  Corrected $nFixedCks  old length: $($telegram.Length)"
+                write-host "Telegram fixed at $timestamp. Chksum calculated from input: $CalcChecksum.  Corrected $nFixedCks"
                 $telegram = "/" + $Matches[0]
  
                 }
@@ -290,7 +290,7 @@ switch -regex   ($_) {
             $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
             $errorlog += $timestamp
 
-            Write-Output "Chksum error at $timestamp, rate of error: $rateFalse %  or $nFalseTelegram"            
+            Write-Output "Checksum error at $timestamp, rate of error: $rateFalse %  or $nFalseTelegram"            
 
 
             $pattern = '[\x00-\x09\x0B-\x0C\x0E-\x1F\x80-\xFE]'   # matches non-ASCII characters except xFF, CR and LF. These are not expected in a DSMR telegram. (except perhaps the service provider message) 
@@ -545,8 +545,10 @@ Out-File -FilePath $outCSV  -InputObject $ValidityStats   # this output file hol
     # for corrected records it includes how many errors were corrected from the beginning of the file. 
     # for untouched records it is zero.
 
-$rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
-Write-Output "$nFalseTelegram checksums are still false. Rate of error: $rateFalse %. $nFixedCks of $nTelegrams telegrams are fixed in $inpLog"
+if ($nTelegrams -ne 0 ) {
+    $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
+    Write-Output "$nFalseTelegram checksums are still false. Rate of error: $rateFalse %. $nFixedCks of $nTelegrams telegrams are fixed in '$inpLog'"
+    }
 
 Out-File -FilePath ($inpLog + ".Noise.csv")  -InputObject $errorlog   # this is an error log file. Only reports when an incoming telegram whad errors
 
@@ -556,5 +558,5 @@ $telegramRecords | Export-Csv -Path ($inpLog+"_Records.csv") -NoTypeInformation 
 if ( $MaxVtime -and $MaxAtime )
     {
             #  $SummaryMax = 
-    write-output ("Maximum voltage: " + $maxV +  " on date " + $MaxVtime.Substring(2,4) + " at " + $MaxVtime.substring(6,4) + ".  Max current: " + $maxA + " A at " + $MaxAtime.Substring(6,4) + " in log '"+ $inpLog +"'")
+    write-output ("Maximum voltage: " + $maxV +  " on date " + $MaxVtime.Substring(2,4) + " at " + $MaxVtime.substring(6,4) + ".  Max current: " + $maxA + " A on date " + $MaxAtime.Substring(2,4) + " at " + $MaxAtime.Substring(6,4))
     }
