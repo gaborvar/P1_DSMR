@@ -15,7 +15,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20231005.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20231028.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0
@@ -23,10 +23,11 @@ $ValidityStats =""  # will store a list of telegrams that failed the checksum te
 $telegram =""
 
 
-$earlierfirstline = "/AUX59902759988"   # initialization value for a valid first line. Used for error correction. 
+$EarlierFirstLine = "/AUX59902759988"   # initialization value for a valid first line. Used for error correction. 
     # This is a valid first line but may not be useful in the specific application, depending on the meter's choice of header. 
-    # You may want to (but not necessary for error correction to work) replace this with the first line that your meter emits. 
+    # You may want to (but do not have to - the error correction would still work) replace this with the first line that your meter emits. 
     # It will be superseded with a correct first line taken from the feed so other meters with different first line can also benefit from error correction.
+    # This variable will be updated with the first line of the telegram when any syntactically correct telegram is read
 
 
 $telegramPrevkWhIn = $null
@@ -36,9 +37,10 @@ $nTelegrams = 0
 $nFalseTelegram = 0
 
 $timePat = "0-0:1\.0\.0\((\d{12}[SW])\).*"
-$FirstLinesPattern = "\r\n\r\n0-0:1\.0\.0\([\s\S]*$" # This is the regex that matches the segment starting from the end of the first line to the first byte that changes from telegram to telegram
-    # This will be used to test if a checkum-failed telegram actually has healthy beginning except for the first byte. 
-    # The first byte is the most prone to transmission errors. It fortunately is easy to guess (/)
+$SkipFirstLine_Pattern = "\r\n\r\n0-0:1\.0\.0\([\s\S]*$" # This is the regex that matches the segment of the telegram 
+    # starting from the end of the first line ending at the end of the telegram.
+    # This will be used to test if a checksum-failed telegram actually has healthy beginning except for the first byte. 
+    # The first byte is the most prone to transmission errors. It fortunately is easy to guess (it is always a slash /)
 
 # $VoltPat = '1-0:[357]2.7.0\((\d+\.\d+)\*V\)' # regular expression pattern to match any of the 3 voltages
 # $AmpPat = '1-0:[357]1.7.0\((\d+)\*A\)' # regular expression pattern to match any amps
@@ -214,7 +216,7 @@ switch -regex   ($_) {
 
     "\!([0-9A-Fa-f]{4})$" {   # sender checksum indicated by "!" and four hex numbers (upper or lower case accepted), followed by end of line. ( a series of 9 characters including the beginning and ending CRLF characters)
             # to make it more robust we should test if this 7-character string occurs inside a data object (in a legitimate line of the telegram that can include arbitraty data)
-            # e.g. Can the utility service provider message 0-0:96.13.0(<message>) may include "!" ?  
+            # e.g. Can the utility service provider message 0-0:96.13.0(<message>) include "!" ?  
             # I did not find reference doc with sufficient details.  Best so far is https://www.netbeheernederland.nl/_upload/Files/Slimme_meter_15_a727fce1f1.pdf
 
         $telegram = $telegram + "!" 
@@ -245,10 +247,10 @@ switch -regex   ($_) {
         $nTelegrams ++
         # [uint16]$ChksumTGCorrected = 0
         
-        if ($senderChksInt -ne $CalcChecksum ) { # if checksums do not match handle the error here by trying to substitute suspect bytes. Otherwise skip forward to process telegram into a record.
+        if ($senderChksInt -ne $CalcChecksum ) {    # if checksums do not match handle the error here by trying to substitute suspect bytes. Otherwise skip forward to process telegram into a record.
 
  #               if ($telegram.Length -ne 2342) {
- #                   $tempMatch= ($telegram -cmatch $EarlierFirstLine.Substring(1) + $FirstLinesPattern)
+ #                   $tempMatch= ($telegram -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern)
  #                   $ChksumTGCorrected = CheckSumFromTG( "/" + $Matches[0])
  #           write-host "Telegram $timestamp length:   $($telegram.length) firstline match: $tempMatch  Calculated/Sent checksum: $ChksumTGCorrected / $senderChksInt"
  #           }     
@@ -257,7 +259,7 @@ switch -regex   ($_) {
             # test if the beginning of the telegram (disregarding the very first byte) is the same as expected, from earlier telegram(s). If so, it is likely that the error only affects the first byte. 
             # If a valid first line is found in a corrupted telegram then we assume this is the beginning of the telegram and ascertain it with an extra checksum calculation. 
 
-            if  ( ($telegram -cmatch $EarlierFirstLine.Substring(1) + $FirstLinesPattern) -and ( ( CheckSumFromTG( "/" + $Matches[0])) -eq $senderChksInt )  )  {  # it should ensure that if the comparison throws an error execution continues in the right script block.
+            if  ( ($telegram -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern) -and ( ( CheckSumFromTG( "/" + $Matches[0])) -eq $senderChksInt )  )  {  # it should ensure that if the comparison throws an error execution continues in the right script block.
 
             # happiness, proceed to data extraction to TelegramRec after fixing the first byte of $telegram
                 $nFixedCks++
@@ -310,7 +312,7 @@ switch -regex   ($_) {
 
             $ValidityStats +=  "False,"  +   $NoisyChars.Length + "`r`n"  # +  $senderChksInt.ToChar(
 
-            #  Remove leftovers from this telegram that would contaminate the next. We discard fragments, although it could might be possible to fix the error by examining remaining lines. For future improvement.
+            #  Remove leftovers from this telegram that would contaminate the next. We discard fragments, although it might be possible to fix the error by examining remaining lines. For future improvement.
 
             $telegram  = ""
             $timestamp = ""
@@ -318,7 +320,7 @@ switch -regex   ($_) {
             break    #exit the Switch case for terminating line in the telegram (!<checksum>). Continue with starting fresh looking for the next start of telegram in the same Switch in the next iteration.
 
             }
-            # issue: if an error is generated in the if statement ($telegram -cmatch $EarlierFirstLine.Substring(1) + $FirstLinesPattern) then neither of the branches execute but execution continues here.
+            # issue: if an error is generated in the if statement ($telegram -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern) then neither of the branches execute but execution continues here.
             # Pattern is tested to exclude any non-printable ASCII but there might be other reasons why a statement may generate an error.
         }
 
@@ -329,16 +331,25 @@ switch -regex   ($_) {
 
             $ValidityStats +=  "True,"  +   $ErrorCorrected + "`r`n"
 
-            $FirstLine = $telegram -split '\r?\n' | Select-Object -First 1    # store the first line of the telegram to see if transmission errors in the first line of later telegrams can be corrected. 
 
-            if ( $EarlierFirstLine -ne $EarlierFirstLine ) {
-            if ( ! ( $FirstLine | Select-String -Pattern '[\x00-\x09\x0B-\x0C\x0E-\x1F\x80-\xFE\(\)\\\.]')) {    # Only employ the first line if it does not inclde characters that are likely errors, e.g. non-ASCII chars with exceptions
-                $EarlierFirstline = $FirstLine
-                $errorlog += "First line of telegram " + $timestamp + " is different from earlier:" + $FirstLine +". Will be used to correct errors."
-                }
+    # In preparation for error detection of later telegrams we process the first line of this telegram 
+            $FirstLine = $telegram -split '\r?\n' | Select-Object -First 1    # Separate the first line of the current telegram ...  
+                         #      so we can compare it to corresponding parts of later telegrams. The goal is to detect transmission errors in the first line of later telegrams. 
+
+            if ( $FirstLine -ne $EarlierFirstLine ) {   # never executed. For future improvement.
+                $errorlog += "First line of telegram " + $timestamp + " is different from earlier. " 
+
+                if ( ! ( $FirstLine | Select-String -Pattern '[\x00-\x09\x0B-\x0C\x0E-\x1F\x80-\xFE\(\)\\\.]')) {    # Only employ the first line if it does not include characters that are likely errors, e.g. non-ASCII chars with exceptions
+                    $EarlierFirstline = $FirstLine         #  Persist the first line of the current telegram for later use in upcoming  telegrams
+                    $errorlog += $FirstLine +" . Will be used to correct errors.`r`n"
+                    }
+                else {
+                    $errorlog += "EarlierFirstLine is not updated. `r`n"
+                    }
                 }
 
-            # create a single record 
+    # create a single record, then fill it with copied and calculated data from the telegram
+
             $telegramRec = [DSMRTelegramRecordType]::new()     # @{
                 $telegramRec.kWhIn  = [double]::NaN
                 $telegramRec.kWhOut = [double]::NaN
@@ -407,14 +418,14 @@ switch -regex   ($_) {
 
 
             # Convert the timedate field string of the telegram into time. This will be used only for internal stuff. Output will use the original OBIS/COSEM format.
-
+            # Purpose: when switching from and to daylight saving time prevent losing a record.
          
 
             $TelegramTime = get-date -year ("20"+$timestamp.substring(0,2)) -month $timestamp.substring(2,2) -day $timestamp.substring(4,2) -hour $timestamp.Substring(6,2) -minute $timestamp.Substring(8,2)  -second $timestamp.Substring(10,2)  
 
                if ($timestamp[-1] -eq "S" ) {    # Standard (winter) hour is 1 lower in summer than the timestamp
               
-                $TelegramTime += new-timespan -Hours 1
+                $TelegramTime -= new-timespan -Hours 1
                 
                   }
 
@@ -426,9 +437,9 @@ switch -regex   ($_) {
                                   # we assume that time between the last two records were 10 seconds if the dates are less than 15 seconds apart.
                                   # for longer time periods we do not calculate power consumption from the two energy readings
 
-                if ( ($TelegramTime.subtract($TelegramPrevkWhInTime)).totalseconds -lt 15 )   {   # when switching from and to daylight saving time a record may be lost.
+                if ( ($TelegramTime.subtract($TelegramPrevkWhInTime)).totalseconds -lt 15 )   {   # normal timespan is 10 seconds but may be noisy hence comparison with 15 seconds.
 
-                    $TelegramRec.kWInfromConsumption = ( $TelegramRec.kWhIn - $TelegramPrevkWhIn ) * 360  # Assuming that each telegram is 10 seconds apart, calculating power from energy by deviding energy with time (1/360 hours)
+                    $TelegramRec.kWInfromConsumption = ( $TelegramRec.kWhIn - $TelegramPrevkWhIn ) * 360    # Assuming that each telegram is 10 seconds apart, calculating power from energy by deviding energy with time (1/360 hours)
                     }
                         else {
                         $TelegramRec.kWInfromConsumption = [float]::NaN
@@ -445,7 +456,7 @@ switch -regex   ($_) {
 
 
     # Alleviate the low precision of current readings by looking at the power and voltage. 
-    # P1 port amper readings are rounded to integer and do not show the direction of the energy flow per phase. 
+    # P1 port Amper readings are truncated to integer and do not show the direction of the energy flow per phase. 
 
             if ( $telegramRec.kWOut -eq 0)  {       # unfortunately we can calculate useful statistics only if each phase transfers energy in the same direction as the other two. 
                 $telegramRec.TotalAmp =  - $Telegramrec.kWIn / ($telegramRec.Voltage3 + $TelegramRec.Voltage5 + $TelegramRec.Voltage7) * 3 * 1000  # calculate P/U, using the average of U per phase.  Reactive power not accounted for.
@@ -523,16 +534,6 @@ switch -regex   ($_) {
 
 
 
-#    "(/.*$)" {   # This is in prep for simple error handling/correction. 
-                    # The most frequent error in a transmission affects the first few bytes of the telegram. 
-                    # Out of these errors the most frequent error replaces the "/" with ascii 14.   
-                    # This is an error that is easy to correct (replace three characters before the assumed start of telegram with "CRLF/" and re-test the checksum start of telegram indicated by /
-
-        # $telegram = $Matches[1] + "`r`n"   # anything in the line before a "/" is dropped. Anything before this line is also dropped (a telegram fragment). Normally this drops nothing except when the closing "!" of the previous telegram was not found
-
-        # break
-        # }
-
     
     default {$telegram = $telegram + $_ + "`r`n" }
 }
@@ -550,7 +551,7 @@ if ($nTelegrams -ne 0 ) {
     Write-Output "$nFalseTelegram checksums are still false. Rate of error: $rateFalse %. $nFixedCks of $nTelegrams telegrams are fixed in '$inpLog'"
     }
 
-Out-File -FilePath ($inpLog + ".Noise.csv")  -InputObject $errorlog   # this is an error log file. Only reports when an incoming telegram whad errors
+Out-File -FilePath ($inpLog + ".Noise.csv")  -InputObject $errorlog   # this is an error log file. Only reports when an incoming telegram had errors
 
 # out-file -FilePath ($inpLog+".txt") -inputobject $telegramRecords
 $telegramRecords | Export-Csv -Path ($inpLog+"_Records.csv") -NoTypeInformation -UseCulture  # this is the main output file with "_Records.csv" appended to the input file name
