@@ -336,10 +336,10 @@ switch -regex   ($_) {
             $FirstLine = $telegram -split '\r?\n' | Select-Object -First 1    # Separate the first line of the current telegram ...  
                          #      so we can compare it to corresponding parts of later telegrams. The goal is to detect transmission errors in the first line of later telegrams. 
 
-            if ( $FirstLine -ne $EarlierFirstLine ) {   # never executed. For future improvement.
+            if ( $FirstLine -ne $EarlierFirstLine ) {   
                 $errorlog += "First line of telegram " + $timestamp + " is different from earlier. " 
 
-                if ( ! ( $FirstLine | Select-String -Pattern '[\x00-\x09\x0B-\x0C\x0E-\x1F\x80-\xFE\(\)\\\.]')) {    # Only employ the first line if it does not include characters that are likely errors, e.g. non-ASCII chars with exceptions
+                if ( ! ( $FirstLine | Select-String -Pattern '[\x00-\x09\x0B-\x0C\x0E-\x1F\x80-\xFE\(\)\\\.]')) {    # Employ the first line only if it does not include characters that are likely errors, e.g. non-ASCII chars with exceptions
                     $EarlierFirstline = $FirstLine         #  Persist the first line of the current telegram for later use in upcoming  telegrams
                     $errorlog += $FirstLine +" . Will be used to correct errors.`r`n"
                     }
