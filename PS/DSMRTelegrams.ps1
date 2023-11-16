@@ -365,7 +365,7 @@ switch -regex   ($_) {
             if ( $FirstLine -ne $EarlierFirstLine ) {   # never executed. For future improvement.
                 $errorlog += $timestamp + " First line of telegram is different from earlier. " 
 
-                if ( ! ( $FirstLine | Select-String -Pattern '[\x00-\x09\x0B-\x0C\x0E-\x1F\x80-\xFE\(\)\\\.]')) {    # Only employ the first line if it does not include characters that are likely errors, e.g. non-ASCII chars with exceptions
+                if ( ! ( $FirstLine | Select-String -Pattern '[\x00-\x09\x0B-\x0C\x0E-\x1F\x80-\xFE\(\)\\\.]')) {    # Employ the first line only if it does not include characters that are likely errors, e.g. non-ASCII chars with exceptions
                     $EarlierFirstline = $FirstLine         #  Persist the first line of the current telegram for later use in upcoming  telegrams
                     $errorlog += "'"+ $FirstLine +"' will be used to detect errors.`r`n"
                     }

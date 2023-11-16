@@ -56,6 +56,7 @@ Run it in the same directory where the serial log file is located.
 https://github.com/matthijskooijman/arduino-dsmr
 
 https://github.com/matthijskooijman/arduino-dsmr/tree/master/src/dsmr
+https://www.promotic.eu/en/pmdoc/Subsystems/Comm/PmDrivers/IEC62056_OBIS.htm  (OBIS codes from IEC standard)
 
 https://www.ztatz.nl/
 
