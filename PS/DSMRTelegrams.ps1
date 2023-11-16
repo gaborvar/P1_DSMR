@@ -15,11 +15,11 @@
 
 
 
-$inpLog = "P1 meter w solar - 20231028.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20231114.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0
-$ValidityStats =""  # will store a list of telegrams that failed the checksum test, and the number of characters that are not expected (i.e. ASCII CRLF or xFF)
+$ValidityStats =""  # will store a list of every telegram and a boolean to state if valid. If False, the number of invalid chars is given (i.e. ASCII CRLF or xFF). If True, the ord of the fix is added.
 $telegram =""
 
 
@@ -59,7 +59,7 @@ $kWOutPat = '1-0:2.7.0\((\d+\.\d+)\*kW\)' # regular expression pattern to match 
 $kWhInPat  = '1-0:1.8.0\((\d+\.\d+)\*kWh\)'   # regular exp to match total energy incoming from grid
 $kWhOutPat = '1-0:2.8.0\((\d+\.\d+)\*kWh\)'         # ... energy export to grid
 
-$global:errorlog ="Timestamp,Position,NoisyChar,`r`n" 
+$global:errorlog ="Timestamp,Errordescription (Position: NoisyChar...)`r`n" 
 
 
 # Add-type @"     # removed dependency on .net type definition and replaced with class 
@@ -98,11 +98,11 @@ Function CheckSumFromTG($tlgr)  {
 
             }
             catch {
-                $errormessage = "cannot convert to byte or XOR char " + [int]$tlgr[$TB] + " in telegram $timestamp at character position $TB, after "
-                $errormessage +=  $tlgr[[Math]::Max( $TB-7,0) .. [Math]::Max($TB-1, 0)]
-                $global:errorlog += $timestamp +", "+ $errormessage +"`r`n"
-                $chksum = 0
-                break    # if error happens in the first char of the telegram then returns zero to avoid uninitialized local variable
+                $errormessage = "Cannot convert to byte or cannot XOR char " + [int]$tlgr[$TB] + " at character position $TB, after '" + $tlgr.substring([Math]::Max( $TB-7,0), [Math]::Min( 7, $tlgr.length)) + "'"
+
+                # $global:errorlog += $timestamp + ", "+ $errormessage +"`r`n"
+                throw $errormessage
+                break    # if error happens in the first char of the telegram then explicitly return $null to avoid uninitialized local variable
             }
 
 
@@ -223,28 +223,53 @@ switch -regex   ($_) {
 
         $SenderChks = $Matches[1]
         
-        #if ($timestamp -eq "230427025540S"){
-        #write-host $telegram
-        #    }
 
 #            $startTime = get-date 
 
-             [uint16] $CalcChecksum =  CheckSumFromTG($telegram)
+        $nTelegrams ++
+        $ValidityStats += $timestamp + "," 
+
+        try {
+            [uint16]$CalcChecksum =  CheckSumFromTG($telegram)
+        }
+        catch {
+
+            $errorlog += $timestamp + ", "+ $_ +"`r`n"
+         #   write-host $timestamp,  ", ", $_
+            $ValidityStats += "False,`r`n"
+
+            $nFalseTelegram ++
+            $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
+
+            Write-Output "$timestamp $_, rate of error: $rateFalse %  or $nFalseTelegram"            
+
+
+            break
+        }
+        
 
         try {
             $senderChksInt = [UInt16]::Parse($SenderChks, [System.Globalization.NumberStyles]::HexNumber)
-       
-        } catch {
-            write-error "Unreadable CRC in telegram $timestamp."
-            $senderChksInt = 0
-         }
+        } 
+        catch {
+            # write-host "Unreadable CRC in telegram $timestamp."     
+
+            $errorlog += $timestamp + ", Unreadable CRC in telegram.`r`n"
+            $ValidityStats += "False,`r`n"
+
+            $nFalseTelegram ++
+            $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
+
+            Write-Output "Unreadable CRC error at $timestamp, rate of error: $rateFalse %  or $nFalseTelegram"            
+
+            break                   # We should exit with a BREAK which skips error detection and correction
+        }
 
 
 
 
-        $ValidityStats += $timestamp + "," 
         $ErrorCorrected = 0
-        $nTelegrams ++
+
         # [uint16]$ChksumTGCorrected = 0
         
         if ($senderChksInt -ne $CalcChecksum ) {    # if checksums do not match handle the error here by trying to substitute suspect bytes. Otherwise skip forward to process telegram into a record.
@@ -300,17 +325,18 @@ switch -regex   ($_) {
             
             foreach ($NChar in $NoisyChars) {
                 Write-Host " Non-ASCII character '$($NChar.Value)' at position $($NChar.Index)" 
-                $errorlog += "," + $NChar.Index + "," +  [int]($NChar.Value[0])
+                $errorlog += ", " + $NChar.Index + ": " +  [int]($NChar.Value[0])
                 }
 
             if ($noisychars -and ($NChar.index -lt ($telegram.Length-6) ) ) { 
-                $errorlog += "," + $telegram.substring($NChar.index+1, 5)  }
-                else {
-                $errorlog+= ", no invalid char but telegram failed for other reason"
+                $errorlog += " after '" + $telegram.substring($NChar.index+1, 5) + "'`r`n" 
                 }
-            $errorlog += "`r`n"
+                else {
+                $errorlog+= ", no invalid char but telegram failed for another reason.`r`n"
+                }
 
-            $ValidityStats +=  "False,"  +   $NoisyChars.Length + "`r`n"  # +  $senderChksInt.ToChar(
+
+            $ValidityStats +=  "False,"  +   $NoisyChars.Length + "`r`n"  # add the number of chars found invalid. Lower estimate for errors.
 
             #  Remove leftovers from this telegram that would contaminate the next. We discard fragments, although it might be possible to fix the error by examining remaining lines. For future improvement.
 
@@ -337,11 +363,11 @@ switch -regex   ($_) {
                          #      so we can compare it to corresponding parts of later telegrams. The goal is to detect transmission errors in the first line of later telegrams. 
 
             if ( $FirstLine -ne $EarlierFirstLine ) {   # never executed. For future improvement.
-                $errorlog += "First line of telegram " + $timestamp + " is different from earlier. " 
+                $errorlog += $timestamp + " First line of telegram is different from earlier. " 
 
                 if ( ! ( $FirstLine | Select-String -Pattern '[\x00-\x09\x0B-\x0C\x0E-\x1F\x80-\xFE\(\)\\\.]')) {    # Only employ the first line if it does not include characters that are likely errors, e.g. non-ASCII chars with exceptions
                     $EarlierFirstline = $FirstLine         #  Persist the first line of the current telegram for later use in upcoming  telegrams
-                    $errorlog += $FirstLine +" . Will be used to correct errors.`r`n"
+                    $errorlog += "'"+ $FirstLine +"' will be used to detect errors.`r`n"
                     }
                 else {
                     $errorlog += "EarlierFirstLine is not updated. `r`n"
