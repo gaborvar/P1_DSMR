@@ -15,7 +15,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20231114.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20231119.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0
