@@ -15,7 +15,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20231119.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20231011.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0
@@ -59,7 +59,7 @@ $kWOutPat = '1-0:2.7.0\((\d+\.\d+)\*kW\)' # regular expression pattern to match 
 $kWhInPat  = '1-0:1.8.0\((\d+\.\d+)\*kWh\)'   # regular exp to match total energy incoming from grid
 $kWhOutPat = '1-0:2.8.0\((\d+\.\d+)\*kWh\)'         # ... energy export to grid
 
-$global:errorlog ="Timestamp,Errordescription (Position: NoisyChar...)`r`n" 
+$global:errorlog ="Timestamp, ChecksumCalc, Errordescription (Position: NoisyChar...)`r`n" 
 
 
 # Add-type @"     # removed dependency on .net type definition and replaced with class 
@@ -291,11 +291,11 @@ switch -regex   ($_) {
                 $Errorcorrected = $nFixedCks
                 $errorlog += $timestamp
 
-                $errorlog += ", fixed by resetting first char in $($telegram.substring(0,10)) to /. $nFixedCks telegrams fixed.`r`n"
+                $errorlog += ", fixed by resetting first char in $($telegram.substring(0,10)) to /.  $nFixedCks telegrams fixed.`r`n"
                 # write-host $telegram
                 # write-host $Matches
         
-                write-host "Telegram fixed at $timestamp. Chksum calculated from input: $CalcChecksum.  Corrected $nFixedCks"
+                write-host "Telegram fixed at $timestamp. Corrected $nFixedCks"
                 $telegram = "/" + $Matches[0]
  
                 }
@@ -315,7 +315,7 @@ switch -regex   ($_) {
 
             $nFalseTelegram ++
             $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
-            $errorlog += $timestamp
+            $errorlog += $timestamp + ", " + $CalcChecksum
 
             Write-Output "Checksum error at $timestamp, rate of error: $rateFalse %  or $nFalseTelegram"            
 
@@ -324,7 +324,7 @@ switch -regex   ($_) {
             $NoisyChars = $telegram | Select-String -Pattern $pattern -AllMatches | ForEach-Object { $_.Matches }   # select-string operates on all $telegram at once, not per line.
             
             foreach ($NChar in $NoisyChars) {
-                Write-Host " Non-ASCII character '$($NChar.Value)' at position $($NChar.Index)" 
+                # Write-Host " Non-ASCII character '$($NChar.Value)' at position $($NChar.Index)" 
                 $errorlog += ", " + $NChar.Index + ": " +  [int]($NChar.Value[0])
                 }
 
