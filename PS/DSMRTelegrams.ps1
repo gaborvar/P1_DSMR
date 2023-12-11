@@ -1,25 +1,29 @@
 ﻿# Reads DSMR P1 telegrams from the serial log file. Relevant fields of the telegrams are written to a CSV (separator is semicolon) file as a table of records. 
 # Prevents invalid data by checking for errors in the telegrams and either fixing them or dropping if a fix would be too complex.
 # Calculates checksum from each telegram and writes TRUE for a match or FALSE for incorrect checksum to a CSV file.
-# Takes several minutes to process a daily worth of (24x360) telegrams. File operations could be optimised.
 # CSV output is intended to be processed by Excel. See charts separately. 
 # Can be extended with further parsing of the telegrams. Currently it :
     # checks for voltage above regulated levels and marks the record. 
     # checks for current over a certain level and marks the record if above.
-    # calculates power (kW) from the increment in the energy meter (kWh) and stores in a separate field. This is useful to validate if the power field is characteristic of the full 10 sec interval.
+    # calculates power (kW) from the increment in the energy meter (kWh) and stores in a separate field. 
+        # This is useful to validate whether the power reading is characteristic of the full 10 sec interval or just a transient spike.
+    # improves precision of current (A) readings based on the power (kW) fields (the current reading is truncated to integer which can be somewhat rectified)
 
-# It detects communication errors and fixes certain frequently occurring error types. Additional correctable errors could be added to the error correction capabilities. 
+# It detects communication errors and fixes certain frequently occurring error types. 
+        # Additional correctable errors could be added to the error correction capabilities. 
         # E.g. timestamp may be occasionally incorrect, blurring stats if the noise hit the line holding the timestamp in the telegram. 
         # Timestamp could be calculated from the previous and the next telegram's timestamp. (not implemented)
-# This is acceptable if error rate is low. For error rates > 10% per telegram (which corresponds less than 0.005% per byte) or larger you probably need more sophisticated error handling.
+# This is sufficient if error rate is fairly low. For error rates > 10% per telegram (which corresponds less than 0.005% per byte) or larger you probably need more sophisticated error handling.
+
+# Takes several minutes to process a daily worth of (24x360) telegrams. File operations could be optimised.
 
 
 
-$inpLog = "P1 meter w solar - 20231011.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20231205.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
-$nFixedCks = 0
-$ValidityStats =""  # will store a list of every telegram and a boolean to state if valid. If False, the number of invalid chars is given (i.e. ASCII CRLF or xFF). If True, the ord of the fix is added.
+$nFixedCks = 0      # Count of corrected checksum errors
+$ValidityStats =""  # will store a list of every telegram and a boolean to state if valid. If False, the number of invalid chars is given (i.e. ASCII CRLF or xFF). If True, the added integer provides the number of fixed records since the beginning.
 $telegram =""
 
 
@@ -100,16 +104,12 @@ Function CheckSumFromTG($tlgr)  {
             catch {
                 $errormessage = "Cannot convert to byte or cannot XOR char " + [int]$tlgr[$TB] + " at character position $TB, after '" + $tlgr.substring([Math]::Max( $TB-7,0), [Math]::Min( 7, $tlgr.length)) + "'"
 
-                # $global:errorlog += $timestamp + ", "+ $errormessage +"`r`n"
                 throw $errormessage
                 break    # if error happens in the first char of the telegram then explicitly return $null to avoid uninitialized local variable
             }
 
-
-
             
             $chksum = $ChksumLookup[$chksum]   # alternative with lookup. Lookup takes 15 ms vs 100 ms for each incoming byte on a specific i7-7700 CPU @ 3.60GHz system.
-            #$global:FullChksumhistory += $chksum.ToString() + ", " # debug
 
 #            $endTime = Get-Date
 #            $endArithmTime = get-date
@@ -291,9 +291,7 @@ switch -regex   ($_) {
                 $Errorcorrected = $nFixedCks
                 $errorlog += $timestamp
 
-                $errorlog += ", fixed by resetting first char in $($telegram.substring(0,10)) to /.  $nFixedCks telegrams fixed.`r`n"
-                # write-host $telegram
-                # write-host $Matches
+                $errorlog += ", fixed by resetting first few chars in $($telegram.substring(0,10)) to /.  $nFixedCks telegrams fixed, $nFalseTelegram uncorrected.`r`n"
         
                 write-host "Telegram fixed at $timestamp. Corrected $nFixedCks"
                 $telegram = "/" + $Matches[0]
@@ -302,11 +300,7 @@ switch -regex   ($_) {
 
                 # future error correction hint: replace in the custom service provider message with xFF and add extra xFF if shorter due to error that created UTF8 prefix character
 
-     #           if ($telegram -match $ServProviderMessagePat) {
-     #               $TGwithoutcustomMessage = $telegram -replace "0-0:96\.13\.0\(.*?\)\r\n", ""
-
-     #               $Noisychars = $TGwithoutcustomMessage | Select-String -pattern "(\x100-\xFFFF)" -AllMatches | ForEach-Object { $_.Matches }
-            
+             
             else {
 
  
@@ -568,22 +562,22 @@ switch -regex   ($_) {
 }
 $outCSV = $inpLog + "-validity.csv"
 Out-File -FilePath $outCSV  -InputObject $ValidityStats   # this output file holds a record for each telegram whether correct or not. 
-    # For erroneous (not corrected) telegrams it provides the number of unexpected chars (minimum number as it does not attempt to find all incorrect chars.)
+    # For erroneous (not corrected) telegrams it provides the number of unexpected chars. 
+        # (minimum number as it does not attempt to find all incorrect chars.)
+        # (for severe errors e.g. damaged checksum field the number of affected bytes is omitted)
     # for corrected records it includes how many errors were corrected from the beginning of the file. 
     # for untouched records it is zero.
 
 if ($nTelegrams -ne 0 ) {
     $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
-    Write-Output "$nFalseTelegram checksums are still false. Rate of error: $rateFalse %. $nFixedCks of $nTelegrams telegrams are fixed in '$inpLog'"
+    $rateFixedChks = [math]::Round($nFixedCks  / $nTelegrams *100 , 2)
+    Write-Output "$nFalseTelegram checksums are still false. Rate of error: $rateFalse % of total. $nFixedCks of $nTelegrams telegrams ($rateFixedChks %) are fixed in '$inpLog'"
     }
 
 Out-File -FilePath ($inpLog + ".Noise.csv")  -InputObject $errorlog   # this is an error log file. Only reports when an incoming telegram had errors
 
-# out-file -FilePath ($inpLog+".txt") -inputobject $telegramRecords
-$telegramRecords | Export-Csv -Path ($inpLog+"_Records.csv") -NoTypeInformation -UseCulture  # this is the main output file with "_Records.csv" appended to the input file name
+$telegramRecords | Export-Csv -Path ($inpLog+"_Records.csv") -NoTypeInformation -UseCulture       # this is the main output file with "_Records.csv" appended to the input file name
 
-if ( $MaxVtime -and $MaxAtime )
-    {
-            #  $SummaryMax = 
+if ( $MaxVtime -and $MaxAtime ) {
     write-output ("Maximum voltage: " + $maxV +  " on date " + $MaxVtime.Substring(2,4) + " at " + $MaxVtime.substring(6,4) + ".  Max current: " + $maxA + " A on date " + $MaxAtime.Substring(2,4) + " at " + $MaxAtime.Substring(6,4))
     }
