@@ -27,8 +27,10 @@ Have fun building - and please keep feedback flowing !
 In the current implementation the input is log files that mirror the P1 port data flow (telegrams). These log files can be created by e.g. Putty terminal. Code can be changed to take serial port as input directly.
 
 **Output:**
-CSV files. Data fields include filtered and preprocessed data for use in energy management in HA or other platforms, without the cryptic stuff in the DSMR interface. In my case grid phase voltage is critical because overvoltage disables the production of power from the PV plant on my roof. To avoid overvoltage situations I plan to manage consumption in Home Assistant so I added voltage fields to the output. I also added calculated fields to alleviate the limitation in many meter models that current is truncated to integer and direction of energy flow is not directly tracked per phase. Change the PowerShell code as your needs dictate. Peak current may be also useful if you want to switch on or off equipment in your home automatically for your optimisation objectives.
-
+CSV files. Data fields include filtered and preprocessed data for use in energy management in HA or other platforms, without the cryptic stuff in the DSMR interface. 
+In my case grid phase voltage seemed critical because overvoltage disables the production of power from the PV plant on my roof so I added voltage fields to the CSV output. These fields allowed me to analyse voltage and conclude that overvoltage can be fully addressed by simply assigning the largest consuming devices to the right phase. In your case more sophisticated management may be necessary but the voltage fields are there for use in your optimization logic.
+I also added calculated fields to alleviate the limitation in many meter models that current (A) is truncated to integer and direction of energy flow is not directly tracked per phase. Change the PowerShell code as your needs dictate. Peak current may be also useful if you want to switch on or off equipment in your home automatically for your optimisation objectives.
+Two additional files are also created: A validity CSV that includes a line for each input telegram with a boolean specifying if the record is valid (without or after CRC based error correction) or not. The third output is a log of noise induced errors and the conclusion of attempts to correct them, with some details to understand line noise. 
 
 **Implementation**
 
@@ -41,7 +43,7 @@ I use roughly 10 meter Cat5e cable between the power meter and the electronics w
 
 Sharing photos of the preliminary electronics.
 
-I do error handling in the code to improve reliability of the readings and preserve more data rather than discarding full telegrams due to checksum failure in certain bytes within them.  Based on the typical errors (failure modes) that affect my system, the logic checks for the most frequent errors and corrects the telegram. I can catch and correct 80-95% of the errors with this mechanism. The checksum method employed in DSMR v5 is 16 bit which limits our ability to catch all faulty telegrams: If the meter emits a telegram every 10 seconds it means roughy 9k data transfers daily. The likelyhood of at least one faulty telegram which produces the same checksum as the transmitted original adds up fairly quickly.
+I do error handling in the code to improve reliability of the readings and preserve more data rather than discarding full telegrams due to checksum failure in certain bytes within them.  Based on the typical errors (failure modes) that affect my system, the logic checks for the most frequent errors and corrects the telegram. I can catch and correct 80-95% of the errors with this mechanism. The checksum method employed in DSMR v5 is 16 bit which limits our ability to catch all faulty telegrams: If the meter emits a telegram every 10 seconds it means roughy 9k data transfers daily. The likelihood of at least one faulty telegram which produces the same checksum as the transmitted original adds up fairly quickly.
 
 
 **Usage**
