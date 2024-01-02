@@ -19,7 +19,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20231028.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20231018.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -279,7 +279,18 @@ switch -regex   ($_) {
  #           write-host "Telegram $timestamp length:   $($telegram.length) firstline match: $tempMatch  Calculated/Sent checksum: $ChksumTGCorrected / $senderChksInt"
  #           }     
  
-            
+
+            #      look for the service provider message, then remove all chars before the OBIS code after the previous ')'&CRLF. This is fairly frequent error due to line noise. 
+
+            $oldtelegram = $telegram
+            $telegram = $telegram -replace "\)\r\n(.*?)0-0:96\.13\.0\(", ")`r`n0-0:96.13.0("
+
+            if ($telegram -ne $oldtelegram) {
+                Write-Output "*** Removed characters before the service provider message:  $($oldtelegram.substring(1280,100))"
+                Write-Output "result:    $($telegram.substring(1280,100))"
+                $errorlog += $timestamp + ", Removed characters before the service provider message:   " + $oldtelegram.substring(1280,80) + "`r`n"
+            }
+
             # test if the beginning of the telegram (disregarding the very first byte) is the same as expected, from earlier telegram(s). If so, it is likely that the error only affects the first byte. 
             # If a valid first line is found in a corrupted telegram then we assume this is the beginning of the telegram and ascertain it with an extra checksum calculation. 
 
@@ -290,14 +301,17 @@ switch -regex   ($_) {
                 $Errorcorrected = $nFixedCks
                 $errorlog += $timestamp
 
-                $errorlog += ", fixed by resetting first few chars in $($telegram.substring(0,10)) to /.  $nFixedCks telegrams fixed.`r`n"
+                $errorlog += ", fixed by resetting first few chars in $($telegram.substring(0,10)) to / or removing chars before service provider message.  $nFixedCks telegrams fixed.`r`n"
         
                 write-host "Telegram fixed at $timestamp. Corrected $nFixedCks"
                 $telegram = "/" + $Matches[0]
  
                 }
 
-                # future error correction hint: replace in the custom service provider message with xFF and add extra xFF if shorter due to error that created UTF8 prefix character
+                # Future error correction hints: 
+                #   (future) Replace in the custom service provider message after '0-0:96.13.0(' all chars with xFF and add extra xFF if shorter due to error that created UTF8 prefix character
+                #   (done) Check if chars exist before the service provider message after the previous ')' and if so remove them by matching obis code pattern '0-0:96.13.0' 
+                # then validate checksum again
 
              
             else {
@@ -327,7 +341,7 @@ switch -regex   ($_) {
                 }
 
             if ($noisychars -and ($NChar.index -lt ($telegram.Length-6) ) ) { 
-                $errorlog += " after '" + $telegram.substring($NChar.index+1, 5)  +"'  " 
+                $errorlog += " before '" + $telegram.substring($NChar.index+1, 5)  +"'  " 
                 }
                 else {
                 $errorlog+= ", no invalid char but telegram failed for another reason.  "
