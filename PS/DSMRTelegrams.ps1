@@ -19,7 +19,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20231018.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20240104.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -280,10 +280,10 @@ switch -regex   ($_) {
  #           }     
  
 
-            #      look for the service provider message, then remove all chars before the OBIS code after the previous ')'&CRLF. This is fairly frequent error due to line noise. 
+            #      look for the service provider message, then remove all chars before the OBIS code after the previous ')'&CRLF. These characters are often read erroneously due to line noise. 
 
             $oldtelegram = $telegram
-            $telegram = $telegram -replace "\)\r\n(.*?)0-0:96\.13\.0\(", ")`r`n0-0:96.13.0("
+            $telegram = $telegram -replace "\)\r\n(.*?)0-0:96\.13\.0\(", ")`r`n0-0:96.13.0("        # (.*?) represents the chars that should not be there for reasons other than line noise
 
             if ($telegram -ne $oldtelegram) {
                 Write-Output "*** Removed characters before the service provider message:  $($oldtelegram.substring(1280,100))"
@@ -291,12 +291,12 @@ switch -regex   ($_) {
                 $errorlog += $timestamp + ", Removed characters before the service provider message:   " + $oldtelegram.substring(1280,80) + "`r`n"
             }
 
-            # test if the beginning of the telegram (disregarding the very first byte) is the same as expected, from earlier telegram(s). If so, it is likely that the error only affects the first byte. 
+            # test if the beginning of the telegram (disregarding the very first byte) is the same as expected, i.e. the first line of earlier telegram(s). If so, it is likely that the error only affects the first byte. 
             # If a valid first line is found in a corrupted telegram then we assume this is the beginning of the telegram and ascertain it with an extra checksum calculation. 
 
             if  ( ($telegram -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern) -and ( ( CheckSumFromTG( "/" + $Matches[0])) -eq $senderChksInt )  )  {  # it should ensure that if the comparison throws an error execution continues in the right script block.
 
-            # happiness, proceed to data extraction to TelegramRec after fixing the first byte of $telegram
+            # Success, proceed to data extraction to TelegramRec after fixing the first byte of $telegram
                 $nFixedCks++
                 $Errorcorrected = $nFixedCks
                 $errorlog += $timestamp
