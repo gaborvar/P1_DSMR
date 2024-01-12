@@ -19,11 +19,11 @@
 
 
 
-$inpLog = "P1 meter w solar - 20231205.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20231018.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
-$nFixedCks = 0      # Count of corrected checksum errors
-$ValidityStats =""  # will store a list of every telegram and a boolean to state if valid. If False, the number of invalid chars is given (i.e. ASCII CRLF or xFF). If True, the added integer provides the number of fixed records since the beginning.
+$nFixedCks = 0       # Count of corrected checksum errors
+$ValidityStats = ""  # will store a list of every telegram timestamp and a boolean to state if the telegram is valid. If False, the number of invalid chars is given (i.e. ASCII CRLF or xFF). If True, the added integer provides the number of fixed records since the beginning.
 $telegram =""
 
 
@@ -148,7 +148,6 @@ $telegramRecords = New-Object System.Collections.Generic.List[DSMRTelegramRecord
 # output: a vector (one dimensional array) of uint16 numbers, each is the updated checksum assuming the old checksum is the index and the incoming data point is zero.
 # 65536 uint16 data points as checksum values are 16 bit 
 
-
 # note: We can cover all 65536 x 256 combinations of checksum and incoming data with just one vector. At run time the checksum needs to be XOR-ed with the incoming byte to calculate the correct index for the incoming byte.
 
 
@@ -198,9 +197,11 @@ $ChksumLookup = New-Object uint16[](65536)
 # $execTime = $(get-date) - $execTime
 # Write-host "Checksum table prepared in $execTime"
 
+
+##############################################################################################################################################
 ##############################################################################################################################################
 
-
+#     Main loop starts here reading the port log file line by line
 
 Get-Content $inpLog | ForEach-Object {
 
@@ -234,15 +235,13 @@ switch -regex   ($_) {
         }
         catch {
 
-            $errorlog += $timestamp + ", "+ $_ +"`r`n"
-         #   write-host $timestamp,  ", ", $_
-            $ValidityStats += "False,`r`n"
-
             $nFalseTelegram ++
             $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
 
-            Write-Output "$timestamp $_, rate of error: $rateFalse %  or $nFalseTelegram"            
+            $errorlog += $timestamp + ", "+ $_ + ", rate of error: " + $rateFalse + " % or " + $nFalseTelegram +  "`r`n"
+            $ValidityStats += "False,`r`n"
 
+            Write-Output "$timestamp $_, rate of error: $rateFalse %  or $nFalseTelegram"            
 
             break
         }
@@ -280,7 +279,18 @@ switch -regex   ($_) {
  #           write-host "Telegram $timestamp length:   $($telegram.length) firstline match: $tempMatch  Calculated/Sent checksum: $ChksumTGCorrected / $senderChksInt"
  #           }     
  
-            
+
+            #      look for the service provider message, then remove all chars before the OBIS code after the previous ')'&CRLF. This is fairly frequent error due to line noise. 
+
+            $oldtelegram = $telegram
+            $telegram = $telegram -replace "\)\r\n(.*?)0-0:96\.13\.0\(", ")`r`n0-0:96.13.0("
+
+            if ($telegram -ne $oldtelegram) {
+                Write-Output "*** Removed characters before the service provider message:  $($oldtelegram.substring(1280,100))"
+                Write-Output "result:    $($telegram.substring(1280,100))"
+                $errorlog += $timestamp + ", Removed characters before the service provider message:   " + $oldtelegram.substring(1280,80) + "`r`n"
+            }
+
             # test if the beginning of the telegram (disregarding the very first byte) is the same as expected, from earlier telegram(s). If so, it is likely that the error only affects the first byte. 
             # If a valid first line is found in a corrupted telegram then we assume this is the beginning of the telegram and ascertain it with an extra checksum calculation. 
 
@@ -291,14 +301,17 @@ switch -regex   ($_) {
                 $Errorcorrected = $nFixedCks
                 $errorlog += $timestamp
 
-                $errorlog += ", fixed by resetting first few chars in $($telegram.substring(0,10)) to /.  $nFixedCks telegrams fixed, $nFalseTelegram uncorrected.`r`n"
+                $errorlog += ", fixed by resetting first few chars in $($telegram.substring(0,10)) to / or removing chars before service provider message.  $nFixedCks telegrams fixed.`r`n"
         
                 write-host "Telegram fixed at $timestamp. Corrected $nFixedCks"
                 $telegram = "/" + $Matches[0]
  
                 }
 
-                # future error correction hint: replace in the custom service provider message with xFF and add extra xFF if shorter due to error that created UTF8 prefix character
+                # Future error correction hints: 
+                #   (future) Replace in the custom service provider message after '0-0:96.13.0(' all chars with xFF and add extra xFF if shorter due to error that created UTF8 prefix character
+                #   (done) Check if chars exist before the service provider message after the previous ')' and if so remove them by matching obis code pattern '0-0:96.13.0' 
+                # then validate checksum again
 
              
             else {
@@ -308,7 +321,12 @@ switch -regex   ($_) {
             # Give up. This telegram is unhealable. We just record the error parameters and exit telegram processing without recording the values in TelegramRec
 
             $nFalseTelegram ++
-            $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
+            if ($nTelegrams -ne 0 ) {
+                $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
+                }
+            else {
+                $rateFalse = 0
+                }
             $errorlog += $timestamp + ", " + $CalcChecksum
 
             Write-Output "Checksum error at $timestamp, rate of error: $rateFalse %  or $nFalseTelegram"            
@@ -323,14 +341,16 @@ switch -regex   ($_) {
                 }
 
             if ($noisychars -and ($NChar.index -lt ($telegram.Length-6) ) ) { 
-                $errorlog += " after '" + $telegram.substring($NChar.index+1, 5) + "'`r`n" 
+                $errorlog += " before '" + $telegram.substring($NChar.index+1, 5)  +"'  " 
                 }
                 else {
-                $errorlog+= ", no invalid char but telegram failed for another reason.`r`n"
+                $errorlog+= ", no invalid char but telegram failed for another reason.  "
                 }
 
+            $errorlog += " " + $rateFalse + " % error rate or " + $nFalseTelegram + " telegrams.`r`n"
 
             $ValidityStats +=  "False,"  +   $NoisyChars.Length + "`r`n"  # add the number of chars found invalid. Lower estimate for errors.
+
 
             #  Remove leftovers from this telegram that would contaminate the next. We discard fragments, although it might be possible to fix the error by examining remaining lines. For future improvement.
 
@@ -349,7 +369,8 @@ switch -regex   ($_) {
 
      # the current telegram should be syntactically correct from this point on, e.g. $timestamp should exist and be meaningful. If it weren't it would have failed the checksum test
 
-            $ValidityStats +=  "True,"  +   $ErrorCorrected + "`r`n"
+            $ValidityStats +=  "True,"  +   $ErrorCorrected + "`r`n"      
+            # If the record is valid then the additional field informs whether it had valid CRC (last field is 0) or it was corrected (last field is the number of telegrams fixed)
 
 
     # In preparation for error detection of later telegrams we process the first line of this telegram 
@@ -571,10 +592,17 @@ Out-File -FilePath $outCSV  -InputObject $ValidityStats   # this output file hol
 if ($nTelegrams -ne 0 ) {
     $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
     $rateFixedChks = [math]::Round($nFixedCks  / $nTelegrams *100 , 2)
+    if (( $nFixedCks + $nFalseTelegram )  -ne 0) {
+        $rateErrorfix = [math]::Round( $nFixedCks / ( $nFixedCks + $nFalseTelegram ) *100 , 1)
+        }
+    else { $rateErrorfix = "No"}
+
     Write-Output "$nFalseTelegram checksums are still false. Rate of error: $rateFalse % of total. $nFixedCks of $nTelegrams telegrams ($rateFixedChks %) are fixed in '$inpLog'"
+    
+    $errorlog += "Total, fixed, remaining:  " + $nTelegrams + "  "  + $nFixedCks + "  " + $nFalseTelegram + " (" + $rateFalse + "% of total).  " + $rateErrorfix + " % of errors are fixed."  
+    Out-File -FilePath ($inpLog + ".Noise.csv")  -InputObject $errorlog   # this is an error log file. Only reports when an incoming telegram had errors
     }
 
-Out-File -FilePath ($inpLog + ".Noise.csv")  -InputObject $errorlog   # this is an error log file. Only reports when an incoming telegram had errors
 
 $telegramRecords | Export-Csv -Path ($inpLog+"_Records.csv") -NoTypeInformation -UseCulture       # this is the main output file with "_Records.csv" appended to the input file name
 
