@@ -4,7 +4,7 @@ The goal is to provide energy meter data to home energy management automation an
 PowerShell script code and hardware implementation sample included. 
 
 
-**Intro**
+# Intro
 
 This experimental project is useful in homes with electricity meters that are equipped with a P1 port, implementing DSMR data specs. This is a fairly common interface offered by a growing number of electricity providers to home owners to access data generated within the meter installed in their homes by the electricity service provider.
 
@@ -23,16 +23,17 @@ You are in the intended audience if:
 Have fun building - and please keep feedback flowing !
 
 
-**Input:**
+# Input:
 In the current implementation the input is log files that mirror the P1 port data flow (telegrams). These log files can be created by e.g. Putty terminal. Code can be changed to take serial port as input directly.
 
-**Output:**
+# Output:
+
 CSV files. Data fields include filtered and preprocessed data for use in energy management in HA or other platforms, without the cryptic stuff in the DSMR interface. 
 In my case grid phase voltage seemed critical because overvoltage disables the production of power from the PV plant on my roof so I added voltage fields to the CSV output. These fields allowed me to analyse voltage and conclude that overvoltage can be fully addressed by simply assigning the largest consuming devices to the right phase. In your case more sophisticated management may be necessary but the voltage fields are there for use in your optimization logic.
 I also added calculated fields to alleviate the limitation in many meter models that current (A) is truncated to integer and direction of energy flow is not directly tracked per phase. Change the PowerShell code as your needs dictate. Peak current may be also useful if you want to switch on or off equipment in your home automatically for your optimisation objectives.
 Two additional files are also created: A validity CSV that includes a line for each input telegram with a boolean specifying if the record is valid (without or after CRC based error correction) or not. The third output is a log of noise induced errors and the conclusion of attempts to correct them, with some details to understand line noise. 
 
-**Implementation**
+# Implementation
 
 Due to specifics of the output interface on the smart meter (open collector port) a slim but important electronics layer is needed.
 I was not fortunate enough to accomplish the necessary signal inversion by reconfiguring or flashing the chip in my USB converter cable as others did with their FTDI chips. The PL-2303 GC chip within my DTECH USB/serial converter cable is either not able to invert the signal or it is not documented. I created the simple circuit suggested and documented by others. Sufficient literature is available on other sites (e.g. https://github.com/sza2/esp01p1dsmr, thanks for sharing) so I only share two photos of my temporary board.
@@ -46,7 +47,7 @@ Sharing photos of the preliminary electronics.
 I do error handling in the code to improve reliability of the readings and preserve more data rather than discarding full telegrams due to checksum failure in certain bytes within them.  Based on the typical errors (failure modes) that affect my system, the logic checks for the most frequent errors and corrects the telegram. I can catch and correct 80-95% of the errors with this mechanism. The checksum method employed in DSMR v5 is 16 bit which limits our ability to catch all faulty telegrams: If the meter emits a telegram every 10 seconds it means roughy 9k data transfers daily. The likelihood of at least one faulty telegram which produces the same checksum as the transmitted original adds up fairly quickly.
 
 
-**Usage**
+# Usage
 
 DSMRTelegrams.ps1 script is the main module. 
 Change the name of the input file in line ' $inpLog = "P1 meter putty - 20230605.log" '  
@@ -54,7 +55,7 @@ Run it in the same directory where the serial log file is located.
 
 
 
-**Useful links (many thanks to the authors!):** 
+# Useful links (many thanks to the authors!):
 
 https://github.com/matthijskooijman/arduino-dsmr
 
@@ -74,11 +75,13 @@ https://hup.hu/node/173041
 
 
 
-**Future plans**
+# Future plans
 
 I intend to test data protection technologies like confidential computing to address concerns with cloud based processing. See https://learn.microsoft.com/en-us/azure/confidential-computing/confidential-containers
 
-I may test USB virtualization software in Windows 10 or other methods which allow me to pass the data from this project to a Docker container that runs Home Assistant in WSL. I plan to replace file based input created as terminal logs with directly reading the USB port from code. 
+I will experiment with Open AI large language models to see how they can be used to understand and infer from data provided by this project. The platform for the LLM integration will likely be Home Assistant. Open AI models can be prompted to access external data sources through APIs provided by external party. Home Assistant offers an API that seems to be a good fit for the LLM to call for accessing preloaded P1 data and other related data stored in Home Assistant.
+
+I may also test USB virtualization software in Windows 10 or other methods which allow me to pass the data from this project to a Docker container that runs Home Assistant in WSL. I plan to replace file based input created as terminal logs with directly reading the USB port from code. 
 
 I will look into leveraging other DSMR parsers available on github, however there are implementation differences apparently even within the same jurisdiction (in my case Hungary). 
 
