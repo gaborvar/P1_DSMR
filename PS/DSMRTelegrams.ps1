@@ -19,7 +19,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20240115.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20240221.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
