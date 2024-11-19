@@ -19,13 +19,15 @@
 
 
 
-$inpLog = "P1 meter w solar - 20240221.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20241103.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
 $ValidityStats = ""  # will store a list of every telegram timestamp and a boolean to state if the telegram is valid. If False, the number of invalid chars is given (i.e. ASCII CRLF or xFF). If True, the added integer provides the number of fixed records since the beginning.
-$telegram =""
-
+$telegram = ""
+$timestamp = "-No timestamp-"
+$prevProviderMessage = ""
+$thisProviderMessage = ""
 
 $EarlierFirstLine = "/AUX59902759988"   # initialization value for a valid first line. Used for error correction. 
     # This is a valid first line but may not be useful in the specific application, depending on the meter's choice of header. 
@@ -98,14 +100,12 @@ Function CheckSumFromTG($tlgr)  {
 
                 $chksum = $chksum -bxor ( [byte]$tlgr[$TB] )
                 # whote-host "Conversion to byte, or XOR failed" 
-
-
             }
             catch {
-                $errormessage = "Cannot convert to byte or cannot XOR char " + [int]$tlgr[$TB] + " at character position $TB, after '" + $tlgr.substring([Math]::Max( $TB-7,0), [Math]::Min( 7, $tlgr.length)) + "'"
+                $errormessage = "Cannot convert to byte or cannot XOR char " + [int]$tlgr[$TB] + " at character position $TB, after '" + $tlgr.substring([Math]::Max( $TB-7,0), [Math]::Min( 7, $tlgr.length-$TB)) + "'"
 
                 throw $errormessage
-                break    # if error happens in the first char of the telegram then explicitly return $null to avoid uninitialized local variable
+                break    # exit FOR loop and return
             }
 
             
@@ -120,8 +120,11 @@ Function CheckSumFromTG($tlgr)  {
                     #    $global:PerPlusMatches = $tlgr
                     #    }
                     # write-host "It is "  ($tlgr -ceq $global:PerPlusMatches) "that " $chksum " should be 15090"
-
                     # $global:FullChksumhistory = ""
+
+        #        if ( $chksum.GetType().FullName -ne "System.UInt16")   {
+        #               Write-Host "Type upon exit from CheckSumFromTG(): $( $chksum.GetType().FullName )"
+        #               }
         return $chksum
     }
 
@@ -210,13 +213,14 @@ switch -regex   ($_) {
     "(/.*$)" {   # start of telegram indicated by /
 
         $telegram = $Matches[1] + "`r`n"   # anything in the line before a "/" is dropped. Anything before this line is also dropped (a telegram fragment). Normally this drops nothing except when the closing "!" of the previous telegram was not found
+                 # In case a telegram fragment was collected before this new telegram, its timestamp is not reset here. If the "/" is an error, by removing the timestamp we lose track of the record, cannot report the error correctly.
 
         break
         }
 
 
     "\!([0-9A-Fa-f]{4})$" {   # sender checksum indicated by "!" and four hex numbers (upper or lower case accepted), followed by end of line. ( a series of 9 characters including the beginning and ending CRLF characters)
-            # to make it more robust we should test if this 7-character string occurs inside a data object (in a legitimate line of the telegram that can include arbitraty data)
+            # to make it more robust we should test if this 7-character string occurs inside a data object (in a legitimate line of the telegram that can include arbitrary data)
             # e.g. Can the utility service provider message 0-0:96.13.0(<message>) include "!" ?  
             # I did not find reference doc with sufficient details.  Best so far is https://www.netbeheernederland.nl/_upload/Files/Slimme_meter_15_a727fce1f1.pdf
 
@@ -241,9 +245,12 @@ switch -regex   ($_) {
             $errorlog += $timestamp + ", "+ $_ + ", rate of error: " + $rateFalse + " % or " + $nFalseTelegram +  "`r`n"
             $ValidityStats += "False,`r`n"
 
-            Write-Output "$timestamp $_, rate of error: $rateFalse %  or $nFalseTelegram"            
+            Write-Output "$timestamp $_, rate of error: $rateFalse %  or $nFalseTelegram"
 
-            break
+            $timestamp = "-No timestamp-"   # invalidate the timestamp until a new one is found
+
+            break       #   This exits the switch block, not only the Catch.
+                        #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
         }
         
 
@@ -261,7 +268,14 @@ switch -regex   ($_) {
 
             Write-Output "Unreadable CRC error at $timestamp, rate of error: $rateFalse %  or $nFalseTelegram"            
 
-            break                   # We should exit with a BREAK which skips error detection and correction
+            $timestamp = "-No timestamp-"   # invalidate the timestamp until a new one is found
+
+            break   #   We exit the SWITCH block with a BREAK which skips further error detection and correction, 
+                    #   and completes the processing the last line of the telegram.
+                    #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
+                    #   todo: if we exit the telegram processing here and do not delete the $telegram, and the next telegram starts with a 
+                    #   correctable error in the first line (first "/" lost in transit), then error correction may not work. 
+                    #   It may rely on the missing "/" being in the first line. (?)
         }
 
 
@@ -286,8 +300,7 @@ switch -regex   ($_) {
             $telegram = $telegram -replace "\)\r\n(.*?)0-0:96\.13\.0\(", ")`r`n0-0:96.13.0("        # (.*?) represents the chars that should not be there for reasons other than line noise
 
             if ($telegram -ne $oldtelegram) {
-                Write-Output "*** Removed characters before the service provider message:  $($oldtelegram.substring(1280,100))"
-                Write-Output "result:    $($telegram.substring(1280,100))"
+                Write-Output "Removed characters before the service provider message:  $($oldtelegram.substring(1280,80))"
                 $errorlog += $timestamp + ", Removed characters before the service provider message:   " + $oldtelegram.substring(1280,80) + "`r`n"
             }
 
@@ -295,12 +308,13 @@ switch -regex   ($_) {
             # If a valid first line is found in a corrupted telegram then we assume this is the beginning of the telegram and ascertain it with an extra checksum calculation. 
 
             if  ( ($telegram -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern) -and ( ( CheckSumFromTG( "/" + $Matches[0])) -eq $senderChksInt )  )  {  # it should ensure that if the comparison throws an error execution continues in the right script block.
-
+                                                    #               Function call on the left of -eq must in parenthesis if type is uint16. Otherwise precedence or type casting is messed up
+                                    
+                                                    
             # Success, proceed to data extraction to TelegramRec after fixing the first byte of $telegram
                 $nFixedCks++
                 $Errorcorrected = $nFixedCks
                 $errorlog += $timestamp
-
                 $errorlog += ", fixed by resetting first few chars in $($telegram.substring(0,10)) to / or removing chars before service provider message.  $nFixedCks telegrams fixed.`r`n"
         
                 write-host "Telegram fixed at $timestamp. Corrected $nFixedCks"
@@ -308,8 +322,44 @@ switch -regex   ($_) {
  
                 }
 
+            elseif (        # Test if the telegram is fixed by replacing the service provider message (all 255's currently) with the message in the previous telegram.
+                    $prevProviderMessage -ne "" -and 
+                    $telegram -match "([\s\S]*?\r?\n0-0:96\.13\.0\()(.*?)(\)\r?\n[\s\S]*|\)$)" -and         # This handles line breaks. Code should start at the beginning of the line.
+                    $matches[2]  -ne  $prevProviderMessage -and
+                    ((CheckSumFromTG($matches[1] +  $prevProviderMessage + $matches[3])) -eq $senderChksInt)     # Function call on the left of -eq must be in parenthesis.  # Error in CheckSumFromTG is unlikely as all 3 parts have gone through it earlier
+                    ) {
+                Write-Host "Checksums comparison result (must be True, not a number): " ((CheckSumFromTG($matches[1] +  $prevProviderMessage + $matches[3])) -eq $senderChksInt)
+                
+            #    $calculatedChecksum = [int](CheckSumFromTG($matches[1] + $prevProviderMessage + $matches[3]))
+            #    $senderChecksum = [int]$senderChksInt
+                
+            #    Write-Host "Calculated CheckSum (as int): $calculatedChecksum"
+            #    Write-Host "Sender CheckSum (as int): $senderChecksum"
+                
+            #    if ($calculatedChecksum -eq $senderChecksum) {
+            #        Write-Host "Checksums are equal"
+            #    } else {
+            #        Write-Host "Checksums are NOT equal"
+            #    }
+
+                $telegram = $matches[1] +  $prevProviderMessage + $matches[3]       #   replace provider message with the old
+                $thisProviderMessage = $prevProviderMessage     # Discard current provider message, prevent using it in the next telegram
+
+                if ($prevProviderMessage -match "^[\xFF]*$") {  # for display, shorten the long service provider message  
+                    $prevProviderMessage = "string of xFFs"
+                }
+                                                
+                $nFixedCks++
+                $Errorcorrected = $nFixedCks
+
+                Write-Output ($timestamp + " * Replaced the provider message with:   " + $prevProviderMessage + "    Corrected $nFixedCks" )
+                $errorlog += $timestamp + ", Replaced the service provider message with the previous telegram's:   " + $prevProviderMessage + "  $nFixedCks telegrams fixed.`r`n"
+
+                }
+
+
                 # Future error correction hints: 
-                #   (future) Replace in the custom service provider message after '0-0:96.13.0(' all chars with xFF and add extra xFF if shorter due to error that created UTF8 prefix character
+                #   (done) Replace in the custom service provider message after '0-0:96.13.0(' all chars with xFF and add extra xFF if shorter due to error that created UTF8 prefix character
                 #   (done) Check if chars exist before the service provider message after the previous ')' and if so remove them by matching obis code pattern '0-0:96.13.0' 
                 # then validate checksum again
 
@@ -355,9 +405,9 @@ switch -regex   ($_) {
             #  Remove leftovers from this telegram that would contaminate the next. We discard fragments, although it might be possible to fix the error by examining remaining lines. For future improvement.
 
             $telegram  = ""
-            $timestamp = ""
+            $timestamp = "-No timestamp-"
 
-            break    #exit the Switch case for terminating line in the telegram (!<checksum>). Continue with starting fresh looking for the next start of telegram in the same Switch in the next iteration.
+            break    # exit the Switch case for the terminating line (the line with "!<checksum>") in the telegram. Continue with starting fresh: looking for the next start of telegram in the same Switch in the next iterations.
 
             }
             # issue: if an error is generated in the if statement ($telegram -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern) then neither of the branches execute but execution continues here.
@@ -371,6 +421,7 @@ switch -regex   ($_) {
 
             $ValidityStats +=  "True,"  +   $ErrorCorrected + "`r`n"      
             # If the record is valid then the additional field informs whether it had valid CRC (last field is 0) or it was corrected (last field is the number of telegrams fixed)
+            # todo: check if $Errorcorrected variable is needed. $nFixedCks seems reusable here
 
 
     # In preparation for error detection of later telegrams we process the first line of this telegram 
@@ -513,7 +564,7 @@ switch -regex   ($_) {
             if ( $TelegramRec.Voltage3 -ge $maxV ) {
 
                 $maxV = $telegramRec.Voltage3
-                $MaxVtime = $Timestamp
+                $MaxVtime = $timestamp
                 $TelegramRec.VoltStress += "3"
                 }
 
@@ -521,14 +572,14 @@ switch -regex   ($_) {
             if ( $TelegramRec.Voltage5 -ge $maxV ) {
 
                 $maxV = $telegramRec.Voltage5
-                $MaxVtime = $Timestamp
+                $MaxVtime = $timestamp
                 $TelegramRec.VoltStress += "5"
                 }
 
             if ( $TelegramRec.Voltage7 -ge $maxV ) {
 
                 $maxV = $telegramRec.Voltage7
-                $MaxVtime = $Timestamp
+                $MaxVtime = $timestamp
                 $TelegramRec.VoltStress += "7"
                 }
 
@@ -537,7 +588,7 @@ switch -regex   ($_) {
             if ( $TelegramRec.Amp3 -ge $maxA ) {
 
                 $maxA = $telegramRec.Amp3
-                $MaxAtime = $Timestamp
+                $MaxAtime = $timestamp
                 $TelegramRec.AmpStress += "3"
                 }
 
@@ -545,14 +596,14 @@ switch -regex   ($_) {
             if ( $TelegramRec.Amp5 -ge $maxA ) {
 
                 $maxA = $telegramRec.Amp5
-                $MaxAtime = $Timestamp
+                $MaxAtime = $timestamp
                 $TelegramRec.AmpStress += "5"
                 }
 
             if ( $TelegramRec.Amp7 -ge $maxA ) {
 
                 $maxA = $telegramRec.Amp7
-                $MaxAtime = $Timestamp
+                $MaxAtime = $timestamp
                 $TelegramRec.AmpStress += "7"
                 }
 
@@ -563,17 +614,21 @@ switch -regex   ($_) {
 
             
 
-            $telegram  = ""
-            $timestamp = ""
+            $telegram  = ""             #   Remove the telegram. Not strictly necessary as it will be removed when the next telegram starts.
+            $timestamp = "-No timestamp-"
+            $prevProviderMessage = $thisProviderMessage     #   Save provider message of this telegram for fixing the next telegram if needed
 
-        }
+        }       #   End of processing the last line of the telegram (the line with "!" and the checksum)
 
     $timePat {
-        $Timestamp = $matches[1]
+        $timestamp = $matches[1]
         $telegram = $telegram + $_ + "`r`n" 
         }
 
-
+    "^0-0:96\.13\.0\(([ -\u00FF\r\n]*)\)$" {        # Identify the service provider message (set to all 255's currently). todo: Speed can be improved, this is executed often 
+        $thisProviderMessage = $Matches[1]          # will be used in the next telegram, not in this one
+        $telegram = $telegram + $_ + "`r`n"         
+        }
 
     
     default {$telegram = $telegram + $_ + "`r`n" }
