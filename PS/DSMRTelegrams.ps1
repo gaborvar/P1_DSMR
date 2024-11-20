@@ -27,7 +27,7 @@ $ValidityStats = ""  # will store a list of every telegram timestamp and a boole
 $telegram = ""
 $timestamp = "-No timestamp-"
 $prevProviderMessage = ""
-$thisProviderMessage = ""
+# $thisProviderMessage = ""
 
 $EarlierFirstLine = "/AUX59902759988"   # initialization value for a valid first line. Used for error correction. 
     # This is a valid first line but may not be useful in the specific application, depending on the meter's choice of header. 
@@ -343,10 +343,10 @@ switch -regex   ($_) {
             #    }
 
                 $telegram = $matches[1] +  $prevProviderMessage + $matches[3]       #   replace provider message with the old
-                $thisProviderMessage = $prevProviderMessage     # Discard current provider message, prevent using it in the next telegram
+            #    $thisProviderMessage = $prevProviderMessage     # Discard current provider message, prevent using it in the next telegram
 
                 if ($prevProviderMessage -match "^[\xFF]*$") {  # for display, shorten the long service provider message  
-                    $prevProviderMessage = "string of xFFs"
+                    $prevProviderMessage = "string of xFFs"     # prevProviderMessage will be taken from $telegram so we do not need to preserve it here
                 }
                                                 
                 $nFixedCks++
@@ -361,6 +361,7 @@ switch -regex   ($_) {
                 # Future error correction hints: 
                 #   (done) Replace in the custom service provider message after '0-0:96.13.0(' all chars with xFF and add extra xFF if shorter due to error that created UTF8 prefix character
                 #   (done) Check if chars exist before the service provider message after the previous ')' and if so remove them by matching obis code pattern '0-0:96.13.0' 
+                #   (future) apply correction of first line to telegrams that suffer byte conversion error in the pre-telegram garbage
                 # then validate checksum again
 
              
@@ -613,10 +614,14 @@ switch -regex   ($_) {
 
 
             
+            if ($telegram -match "\n0-0:96\.13\.0\(([ -\u00FF\r\n]*)\)\r?\n") {     # save the provider message (currently set to all xFFs) in case it is noisy in the next telegram  
+                $prevProviderMessage = $Matches[1]
+                # write-host "New provider message recorded: $prevProviderMessage"
+                }
 
             $telegram  = ""             #   Remove the telegram. Not strictly necessary as it will be removed when the next telegram starts.
             $timestamp = "-No timestamp-"
-            $prevProviderMessage = $thisProviderMessage     #   Save provider message of this telegram for fixing the next telegram if needed
+#            $prevProviderMessage = $thisProviderMessage     #   Save provider message of this telegram for fixing the next telegram if needed
 
         }       #   End of processing the last line of the telegram (the line with "!" and the checksum)
 
@@ -625,10 +630,10 @@ switch -regex   ($_) {
         $telegram = $telegram + $_ + "`r`n" 
         }
 
-    "^0-0:96\.13\.0\(([ -\u00FF\r\n]*)\)$" {        # Identify the service provider message (set to all 255's currently). todo: Speed can be improved, this is executed often 
-        $thisProviderMessage = $Matches[1]          # will be used in the next telegram, not in this one
-        $telegram = $telegram + $_ + "`r`n"         
-        }
+#    "^0-0:96\.13\.0\(([ -\u00FF\r\n]*)\)$" {        # Identify the service provider message (set to all 255's currently).
+#        $thisProviderMessage = $Matches[1]          # will be used in the next telegram, not in this one
+#        $telegram = $telegram + $_ + "`r`n"         
+#        }
 
     
     default {$telegram = $telegram + $_ + "`r`n" }
