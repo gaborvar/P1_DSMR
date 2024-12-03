@@ -19,7 +19,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20241103.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20241012.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -297,15 +297,15 @@ switch -regex   ($_) {
             #      look for the service provider message, then remove all chars before the OBIS code after the previous ')'&CRLF. These characters are often read erroneously due to line noise. 
 
             $oldtelegram = $telegram
-            $telegram = $telegram -replace "\)\r\n(.*?)0-0:96\.13\.0\(", ")`r`n0-0:96.13.0("        # (.*?) represents the chars that should not be there for reasons other than line noise
+            $telegram = $telegram -replace "\)\r\n(.*?)0-0:96\.13\.0\(", ")`r`n0-0:96.13.0("        # (.*?) represents the chars that must not be there unless line noise occurred
 
             if ($telegram -ne $oldtelegram) {
                 Write-Output "Removed characters before the service provider message:  $($oldtelegram.substring(1280,80))"
                 $errorlog += $timestamp + ", Removed characters before the service provider message:   " + $oldtelegram.substring(1280,80) + "`r`n"
             }
 
-            # test if the beginning of the telegram (disregarding the very first byte) is the same as expected, i.e. the first line of earlier telegram(s). If so, it is likely that the error only affects the first byte. 
-            # If a valid first line is found in a corrupted telegram then we assume this is the beginning of the telegram and ascertain it with an extra checksum calculation. 
+            # Test if the first line of the noisy telegram includes a valid first line if the leading garbled bytes are disregarded. If so, it is likely that the line error only affects the first byte of the dispatched telegram and the leading zero bytes. 
+            # If a valid first line is found in a corrupted telegram then we assume it marks the beginning of the correct telegram, chop off everything before it, and ascertain validity with an extra checksum calculation. 
 
             if  ( ($telegram -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern) -and ( ( CheckSumFromTG( "/" + $Matches[0])) -eq $senderChksInt )  )  {  # it should ensure that if the comparison throws an error execution continues in the right script block.
                                                     #               Function call on the left of -eq must in parenthesis if type is uint16. Otherwise precedence or type casting is messed up
@@ -315,20 +315,28 @@ switch -regex   ($_) {
                 $nFixedCks++
                 $Errorcorrected = $nFixedCks
                 $errorlog += $timestamp
-                $errorlog += ", fixed by resetting first few chars in $($telegram.substring(0,10)) to / or removing chars before service provider message.  $nFixedCks telegrams fixed.`r`n"
-        
-                write-host "Telegram fixed at $timestamp. Corrected $nFixedCks"
-                $telegram = "/" + $Matches[0]
- 
+                $errorlog += ", Tested for garbled characters in the first line $($telegram.substring(0,12)) and removed them if found. Telegram is now valid.  $nFixedCks telegrams fixed."
+                # $errorlog +=       # compare to [convert]::ToString(([int][char]"/"),2)
+                if (-not $telegram.contains(([char]14 + "AU"))) { 
+                    $errorlog += (" Unusual error pattern: Leading '/' was not modified to char(14) in transit.  " +  (" First three chars: " + [int][char]($telegram.substring(0,1)) + " (" + [convert]::ToString(([int][char]($telegram.substring(0,1)) ),2) + ")   " + [int][char]($telegram.substring(1,1)) + " (" + [convert]::ToString(([int][char]($telegram.substring(1,1)) ),2) + ")  " + [int][char]($telegram.substring(2,1))  +"`r`n" )        )        # + $telegram.Substring(0, [math]::Min( $telegram.Length , 30)  ) +"`r`n" 
+                    Write-Host "Unusual pattern preceding the telegram fixed. First char: ", ([convert]::ToString(([int][char]($telegram.substring(0,1)) ),2))
+                    }
+                else {
+                    $errorlog += "`r`n"
                 }
 
-            elseif (        # Test if the telegram is fixed by replacing the service provider message (all 255's currently) with the message in the previous telegram.
+                write-host "Telegram fixed at $timestamp. Corrected $nFixedCks"
+                $telegram = "/" + $Matches[0]
+
+                }
+
+            elseif (        # Test if the telegram is fixed by replacing the service provider message with the message in the previous correct telegram (all 255's currently).
                     $prevProviderMessage -ne "" -and 
                     $telegram -match "([\s\S]*?\r?\n0-0:96\.13\.0\()(.*?)(\)\r?\n[\s\S]*|\)$)" -and         # This handles line breaks. Code should start at the beginning of the line.
                     $matches[2]  -ne  $prevProviderMessage -and
                     ((CheckSumFromTG($matches[1] +  $prevProviderMessage + $matches[3])) -eq $senderChksInt)     # Function call on the left of -eq must be in parenthesis.  # Error in CheckSumFromTG is unlikely as all 3 parts have gone through it earlier
                     ) {
-                Write-Host "Checksums comparison result (must be True, not a number): " ((CheckSumFromTG($matches[1] +  $prevProviderMessage + $matches[3])) -eq $senderChksInt)
+                # Write-Host "Checksums comparison result (must be True, not a number): " ((CheckSumFromTG($matches[1] +  $prevProviderMessage + $matches[3])) -eq $senderChksInt)
                 
             #    $calculatedChecksum = [int](CheckSumFromTG($matches[1] + $prevProviderMessage + $matches[3]))
             #    $senderChecksum = [int]$senderChksInt
