@@ -19,7 +19,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20241012.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20241215.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -299,10 +299,16 @@ switch -regex   ($_) {
             $oldtelegram = $telegram
             $telegram = $telegram -replace "\)\r\n(.*?)0-0:96\.13\.0\(", ")`r`n0-0:96.13.0("        # (.*?) represents the chars that must not be there unless line noise occurred
 
-            if ($telegram -ne $oldtelegram) {
-                Write-Output "Removed characters before the service provider message:  $($oldtelegram.substring(1280,80))"
-                $errorlog += $timestamp + ", Removed characters before the service provider message:   " + $oldtelegram.substring(1280,80) + "`r`n"
+            if ($telegram.Length -ne $oldtelegram.Length) {     # better to check the length than the content of strings. Two different strings may test as equal if the difference is only some nonprinting chars
+                Write-Output ("Removed characters before the service provider message. Len telegram: $($oldtelegram.Length); after fix: $($telegram.Length).  " +
+                            "Before fix:  $($oldtelegram.substring(1280,70))")
+                $errorlog += $timestamp + ", Removed characters before the service provider message:   " + $oldtelegram.substring(1280,80) + 
+                        "   1302nd char code: " + ([int][char]$oldtelegram.Substring(1302,1)) + "  Len telegram: " + ($oldtelegram.Length) + "`r`n"
             }
+            # if ($timestamp -eq "241218204920W") {
+            #     write-output $telegram.Substring(1290,30), $oldtelegram.Substring(1290,30) , ([int][char]$oldtelegram.Substring(1302,1))
+            #     $errorlog += "old: "+ $oldtelegram.Substring(1290,30) + "  "                                          
+            #}
 
             # Test if the first line of the noisy telegram includes a valid first line if the leading garbled bytes are disregarded. If so, it is likely that the line error only affects the first byte of the dispatched telegram and the leading zero bytes. 
             # If a valid first line is found in a corrupted telegram then we assume it marks the beginning of the correct telegram, chop off everything before it, and ascertain validity with an extra checksum calculation. 
@@ -318,8 +324,11 @@ switch -regex   ($_) {
                 $errorlog += ", Tested for garbled characters in the first line $($telegram.substring(0,12)) and removed them if found. Telegram is now valid.  $nFixedCks telegrams fixed."
                 # $errorlog +=       # compare to [convert]::ToString(([int][char]"/"),2)
                 if (-not $telegram.contains(([char]14 + "AU"))) { 
-                    $errorlog += (" Unusual error pattern: Leading '/' was not modified to char(14) in transit.  " +  (" First three chars: " + [int][char]($telegram.substring(0,1)) + " (" + [convert]::ToString(([int][char]($telegram.substring(0,1)) ),2) + ")   " + [int][char]($telegram.substring(1,1)) + " (" + [convert]::ToString(([int][char]($telegram.substring(1,1)) ),2) + ")  " + [int][char]($telegram.substring(2,1))  +"`r`n" )        )        # + $telegram.Substring(0, [math]::Min( $telegram.Length , 30)  ) +"`r`n" 
-                    Write-Host "Unusual pattern preceding the telegram fixed. First char: ", ([convert]::ToString(([int][char]($telegram.substring(0,1)) ),2))
+                    $errorlog += (" Unusual error pattern: Leading '/' was not modified to char(14) in transit.  " +  
+                        (" First three chars: " + [int][char]($telegram.substring(0,1)) + " (" + [convert]::ToString(([int][char]($telegram.substring(0,1)) ),2) + ")   " + 
+                        [int][char]($telegram.substring(1,1)) + " (" + [convert]::ToString(([int][char]($telegram.substring(1,1)) ),2) + ")  " + 
+                        [int][char]($telegram.substring(2,1))  +"`r`n" )        )        # + $telegram.Substring(0, [math]::Min( $telegram.Length , 30)  ) +"`r`n" 
+                    Write-Host "Unusual pattern preceding the telegram; fixed. First char: ", ([convert]::ToString(([int][char]($telegram.substring(0,1)) ),2))
                     }
                 else {
                     $errorlog += "`r`n"
@@ -360,7 +369,7 @@ switch -regex   ($_) {
                 $nFixedCks++
                 $Errorcorrected = $nFixedCks
 
-                Write-Output ($timestamp + " * Replaced the provider message with:   " + $prevProviderMessage + "    Corrected $nFixedCks" )
+                Write-Output ($timestamp + " Replaced the provider message with:   " + $prevProviderMessage + "    Corrected $nFixedCks" )
                 $errorlog += $timestamp + ", Replaced the service provider message with the previous telegram's:   " + $prevProviderMessage + "  $nFixedCks telegrams fixed.`r`n"
 
                 }
