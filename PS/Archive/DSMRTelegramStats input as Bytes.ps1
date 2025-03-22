@@ -367,6 +367,6 @@ Out-File -FilePath ($inpLog + ".Noise.csv")  -InputObject $errorlog
 
 $telegramRecords | Export-Csv -Path ($inpLog+"_semicolon.csv") -NoTypeInformation -UseCulture
 
-$SummaryMax = "Maximum voltage: " + $maxV +  " on date " + $maxVtime.Substring(2,4) + " at " + $maxVtime.substring(6,4) + ".  Max current: " + $maxA + " A at " + $maxAtime.Substring(6,4) + " in log '"+ $inpLog +"'"
+$SummaryMax = "Maximum voltage: " + $maxV +  " on date " + $MaxVtime.Substring(2,4) + " at " + $MaxVtime.substring(6,4) + ".  Max current: " + $maxA + " A at " + $maxAtime.Substring(6,4) + " in log '"+ $inpLog +"'"
 write-output $summaryMax
 

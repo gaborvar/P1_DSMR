@@ -19,7 +19,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20241215.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20250322.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -489,8 +489,7 @@ switch -regex   ($_) {
                 $kWhOutPat {  $TelegramRec.kWhOut = [double]$Matches[1] # convert the matched string to a double
                     }
 
-                $volt3pat {  
-                    $TelegramRec.Voltage3 = [float]$Matches[1] # convert the matched string to a float
+                $Volt3Pat {  $TelegramRec.Voltage3 = [float]$Matches[1] # convert the matched string to a float
                     if ($TelegramRec.Voltage3 -gt 240) { $telegramrec.VoltStress += "3" }
                     }
 
@@ -582,7 +581,7 @@ switch -regex   ($_) {
             if ( $TelegramRec.Voltage3 -ge $maxV ) {
 
                 $maxV = $telegramRec.Voltage3
-                $MaxVtime = $timestamp
+                $MaxVtime = $timestamp      # triggers a false positive warning in Visual Studio as it is declared in a script block
                 $TelegramRec.VoltStress += "3"
                 }
 
@@ -606,7 +605,7 @@ switch -regex   ($_) {
             if ( $TelegramRec.Amp3 -ge $maxA ) {
 
                 $maxA = $telegramRec.Amp3
-                $MaxAtime = $timestamp
+                $MaxAtime = $timestamp      # triggers a false positive warning in Visual Studio as it is declared in a script block
                 $TelegramRec.AmpStress += "3"
                 }
 
