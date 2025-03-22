@@ -1,7 +1,7 @@
 # P1_DSMR
 
-The goal is to provide energy meter data to home energy management automation and integration.
-PowerShell script code and hardware implementation sample included. 
+The objective of this project is to provide energy meter data to home energy management automation and integration.
+The project includes PowerShell script code and hardware implementation sample.
 
 
 # Intro
@@ -16,7 +16,7 @@ While several commercial P1 interface implementations are available, the goal of
 
 You are in the intended audience if:
 * you want more control than commercially available building blocks allow
-* you know how you want to use your meter data. This project does not attempt to replicate either Home Assistant or visualisations but it provides useful input to either. 
+* you know how you want to use your meter data. This project does not attempt to replicate either Home Assistant or visualisations but it provides useful input to them. 
 * you are considering a hardware interface (simple electronics) between the meter and your usage point. You can substitute this step with commercial ready-to-order equipment or by flashing firmware of your interface.
 * you use platforms where PowerShell runs, Windows or others. Code tested only on Windows 10 and should be fairly easy to port to non-Windows platforms.
 
@@ -79,10 +79,10 @@ https://hup.hu/node/173041
 
 I intend to test data protection technologies like confidential computing to address concerns with cloud based processing. See https://learn.microsoft.com/en-us/azure/confidential-computing/confidential-containers
 
-I will experiment with Open AI large language models to see how they can be used to understand and infer from data provided by this project. The platform for the LLM integration will likely be Home Assistant. Open AI models can be prompted to access external data sources through APIs provided by external party. Home Assistant offers an API that seems to be a good fit for the LLM to call for accessing preloaded P1 data and other related data stored in Home Assistant.
+I experimented with integration with Open AI large language models to see how they can be used to understand and infer from data provided by this project. The platform for LLM integration was Home Assistant. Open AI models can be prompted to access external data sources through APIs provided by external party. Home Assistant offers an API that is a good fit for the LLM to call when it decices that it needs preloaded P1 data and other related data stored in Home Assistant. (this code is not yet included in this public Github project)
 
-I may also test USB virtualization software in Windows 10 or other methods which allow me to pass the data from this project to a Docker container that runs Home Assistant in WSL. I plan to replace file based input created as terminal logs with directly reading the USB port from code. 
+I planned to test USB virtualization software in Windows 10 which allows me to pass data from this project to a Docker container that runs Home Assistant in WSL (Windows Subsystem for Linux). I plan to replace file based input created as terminal logs with directly reading the USB port from code. Other approaches than USB virtualization might be a better fit for this goal.
 
-I will look into leveraging other DSMR parsers available on github, however there are implementation differences apparently even within the same jurisdiction (in my case Hungary). 
+I will look into leveraging other DSMR parsers available on github, however there are implementation differences apparently even within the same jurisdiction (in my case Hungary) which may prevent me from using generic DSMR libraries not honed for my electricity provider. 
 
 I will probably stop the maintenance of this project after a few more iterations. Once HA integration and cloud integration works I will develop control logic there and I will conclude this P1/DSMR learning exercise as accomplished.
