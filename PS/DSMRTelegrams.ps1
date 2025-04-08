@@ -19,7 +19,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20250322.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20250406.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -27,7 +27,6 @@ $ValidityStats = ""  # will store a list of every telegram timestamp and a boole
 $telegram = ""
 $timestamp = "-No timestamp-"
 $prevProviderMessage = ""
-# $thisProviderMessage = ""
 
 $EarlierFirstLine = "/AUX59902759988"   # initialization value for a valid first line. Used for error correction. 
     # This is a valid first line but may not be useful in the specific application, depending on the meter's choice of header. 
@@ -115,16 +114,6 @@ Function CheckSumFromTG($tlgr)  {
 #            $endArithmTime = get-date
         }
 
-                    # write-host $tlgr $chksum  $PerPlusMatches   ($tlgr -ceq $PerPlusMatches)
-                    # if ( $chksum -eq 15090 ){
-                    #    $global:PerPlusMatches = $tlgr
-                    #    }
-                    # write-host "It is "  ($tlgr -ceq $global:PerPlusMatches) "that " $chksum " should be 15090"
-                    # $global:FullChksumhistory = ""
-
-        #        if ( $chksum.GetType().FullName -ne "System.UInt16")   {
-        #               Write-Host "Type upon exit from CheckSumFromTG(): $( $chksum.GetType().FullName )"
-        #               }
         return $chksum
     }
 
@@ -135,10 +124,6 @@ $telegramRecords = New-Object System.Collections.Generic.List[DSMRTelegramRecord
    [int]   $maxA = 0
    $MaxAtime = ""
    $MaxVtime = ""
-
-# [uint16]$chksum = 0
-# [uint16]$c = 0
-# [byte]$i = 0
 
 
 ############################################################################################################################################
@@ -176,29 +161,9 @@ $ChksumLookup = New-Object uint16[](65536)
                 }
             }
 
-    #        echo $c
        $ChksumLookup[$c] = $chksum
         
     }
-
-
-# Alternatively, we can import the array from file. Not needed any more.
-
-# $stream = New-Object System.IO.FileStream("C:\Users\gabor\OneDrive\Dokumentumok\KocsagU\NapelemVillany\P1\ChksumLookup.bin", [System.IO.FileMode]::Open)
-# $reader = New-Object System.IO.BinaryReader($stream)
-
-# $ChksumLookup = New-Object uint16[](65536)
-
-
-# for ($i = 0; $i -lt 65536; $i++) {
-#    $ChksumLookup[$i] = $reader.ReadUInt16()
-# }
-
-# $reader.Close()
-# $stream.Close()
-
-# $execTime = $(get-date) - $execTime
-# Write-host "Checksum table prepared in $execTime"
 
 
 ##############################################################################################################################################
@@ -247,7 +212,7 @@ switch -regex   ($_) {
 
             Write-Output "$timestamp $_, rate of error: $rateFalse %  or $nFalseTelegram"
 
-            $timestamp = "-No timestamp-"   # invalidate the timestamp until a new one is found
+            $timestamp = "-No timestamp-(prev:" + $timestamp + ")"   # invalidate the timestamp until a new one is found
 
             break       #   This exits the switch block, not only the Catch.
                         #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
@@ -258,8 +223,6 @@ switch -regex   ($_) {
             $senderChksInt = [UInt16]::Parse($SenderChks, [System.Globalization.NumberStyles]::HexNumber)
         } 
         catch {
-            # write-host "Unreadable CRC in telegram $timestamp."     
-
             $errorlog += $timestamp + ", Unreadable CRC in telegram.`r`n"
             $ValidityStats += "False,`r`n"
 
@@ -305,10 +268,6 @@ switch -regex   ($_) {
                 $errorlog += $timestamp + ", Removed characters before the service provider message:   " + $oldtelegram.substring(1280,80) + 
                         "   1302nd char code: " + ([int][char]$oldtelegram.Substring(1302,1)) + "  Len telegram: " + ($oldtelegram.Length) + "`r`n"
             }
-            # if ($timestamp -eq "241218204920W") {
-            #     write-output $telegram.Substring(1290,30), $oldtelegram.Substring(1290,30) , ([int][char]$oldtelegram.Substring(1302,1))
-            #     $errorlog += "old: "+ $oldtelegram.Substring(1290,30) + "  "                                          
-            #}
 
             # Test if the first line of the noisy telegram includes a valid first line if the leading garbled bytes are disregarded. If so, it is likely that the line error only affects the first byte of the dispatched telegram and the leading zero bytes. 
             # If a valid first line is found in a corrupted telegram then we assume it marks the beginning of the correct telegram, chop off everything before it, and ascertain validity with an extra checksum calculation. 
@@ -347,20 +306,7 @@ switch -regex   ($_) {
                     ) {
                 # Write-Host "Checksums comparison result (must be True, not a number): " ((CheckSumFromTG($matches[1] +  $prevProviderMessage + $matches[3])) -eq $senderChksInt)
                 
-            #    $calculatedChecksum = [int](CheckSumFromTG($matches[1] + $prevProviderMessage + $matches[3]))
-            #    $senderChecksum = [int]$senderChksInt
-                
-            #    Write-Host "Calculated CheckSum (as int): $calculatedChecksum"
-            #    Write-Host "Sender CheckSum (as int): $senderChecksum"
-                
-            #    if ($calculatedChecksum -eq $senderChecksum) {
-            #        Write-Host "Checksums are equal"
-            #    } else {
-            #        Write-Host "Checksums are NOT equal"
-            #    }
-
                 $telegram = $matches[1] +  $prevProviderMessage + $matches[3]       #   replace provider message with the old
-            #    $thisProviderMessage = $prevProviderMessage     # Discard current provider message, prevent using it in the next telegram
 
                 if ($prevProviderMessage -match "^[\xFF]*$") {  # for display, shorten the long service provider message  
                     $prevProviderMessage = "string of xFFs"     # prevProviderMessage will be taken from $telegram so we do not need to preserve it here
@@ -543,8 +489,8 @@ switch -regex   ($_) {
             if ($TelegramPrevkWhInTime) {
 
 
-                                  # we assume that time between the last two records were 10 seconds if the dates are less than 15 seconds apart.
-                                  # for longer time periods we do not calculate power consumption from the two energy readings
+                    # we assume that time between the last two records were 10 seconds if the dates are less than 15 seconds apart.
+                    # for longer time periods we do not calculate power consumption from the two energy readings
 
                 if ( ($TelegramTime.subtract($TelegramPrevkWhInTime)).totalseconds -lt 15 )   {   # normal timespan is 10 seconds but may be noisy hence comparison with 15 seconds.
 
@@ -636,8 +582,7 @@ switch -regex   ($_) {
                 }
 
             $telegram  = ""             #   Remove the telegram. Not strictly necessary as it will be removed when the next telegram starts.
-            $timestamp = "-No timestamp-"
-#            $prevProviderMessage = $thisProviderMessage     #   Save provider message of this telegram for fixing the next telegram if needed
+            $timestamp = "-No timestamp-(prev:" + $timestamp + ")"
 
         }       #   End of processing the last line of the telegram (the line with "!" and the checksum)
 
@@ -645,11 +590,6 @@ switch -regex   ($_) {
         $timestamp = $matches[1]
         $telegram = $telegram + $_ + "`r`n" 
         }
-
-#    "^0-0:96\.13\.0\(([ -\u00FF\r\n]*)\)$" {        # Identify the service provider message (set to all 255's currently).
-#        $thisProviderMessage = $Matches[1]          # will be used in the next telegram, not in this one
-#        $telegram = $telegram + $_ + "`r`n"         
-#        }
 
     
     default {$telegram = $telegram + $_ + "`r`n" }
