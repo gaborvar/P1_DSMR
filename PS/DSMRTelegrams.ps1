@@ -19,7 +19,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20250406.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20250409.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -87,6 +87,19 @@ class DSMRTelegramRecordType {
     [string]$kWStress
 }
 #"@ 
+
+Function WriteErrorRatePrediction() {
+    Write-Output ( 
+        "Rounded error rate would be " +
+        "$($rateFalse - 0.01) % " + 
+        "if no error occured in the next " + 
+        "$( [math]::Round(( ($nFalseTelegram / ($rateFalse - 0.005) * 100 ) - $nTelegrams) / 360, 1) ) " + 
+        "hours " +
+        "or " +
+        "$( [math]::Round( ($nFalseTelegram + 1 ) / $nTelegrams * 100, 2 )) % " +
+        "if another error occured immediately." 
+        )    
+    }
 
 Function CheckSumFromTG($tlgr)  {
         [uint16]$chksum=0
@@ -344,7 +357,7 @@ switch -regex   ($_) {
             $errorlog += $timestamp + ", " + $CalcChecksum
 
             Write-Output "Checksum error at $timestamp, rate of error: $rateFalse %  or $nFalseTelegram"            
-
+            WriteErrorRatePrediction
 
             $pattern = '[\x00-\x09\x0B-\x0C\x0E-\x1F\x80-\xFE]'   # matches non-ASCII characters except xFF, CR and LF. These are not expected in a DSMR telegram. (except perhaps the service provider message) 
             $NoisyChars = $telegram | Select-String -Pattern $pattern -AllMatches | ForEach-Object { $_.Matches }   # select-string operates on all $telegram at once, not per line.
@@ -614,6 +627,7 @@ if ($nTelegrams -ne 0 ) {
     else { $rateErrorfix = "No"}
 
     Write-Output "$nFalseTelegram checksums are still false. Rate of error: $rateFalse % of total. $nFixedCks of $nTelegrams telegrams ($rateFixedChks %) are fixed in '$inpLog'"
+    WriteErrorRatePrediction
     
     $errorlog += "Total, fixed, remaining:  " + $nTelegrams + "  "  + $nFixedCks + "  " + $nFalseTelegram + " (" + $rateFalse + "% of total).  " + $rateErrorfix + " % of errors are fixed."  
     Out-File -FilePath ($inpLog + ".Noise.csv")  -InputObject $errorlog   # this is an error log file. Only reports when an incoming telegram had errors
