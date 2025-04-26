@@ -89,19 +89,24 @@ class DSMRTelegramRecordType {
 #"@ 
 
 Function WriteErrorRatePrediction() {
-    Write-Output ( 
-        "Rounded error rate would be " +
-        "$($rateFalse - 0.01) % " + 
-        "if no error occured in the next " + 
-        "$( [math]::Round(( ($nFalseTelegram / ($rateFalse - 0.005) * 100 ) - $nTelegrams) / 360, 1) ) " + 
-        "hours " +
-        "or " +
-        "$( [math]::Round( ($nFalseTelegram + 1 ) / $nTelegrams * 100, 2 )) % " +
+        $prediction = "Rounded error rate would be "
+        if ( $rateFalse -gt 0 ) {
+            $prediction +=
+            "$($rateFalse - 0.01) % " + 
+            "if no error occured in the next " + 
+            "$( [math]::Round(( ($nFalseTelegram / ($rateFalse - 0.005) * 100 ) - $nTelegrams) / 360, 1) ) " + 
+            "hours " +
+            "or "
+            }
+        $prediction += "$( [math]::Round( ($nFalseTelegram + 1 ) / $nTelegrams * 100, 2 )) % " +
         "if another error occured immediately." 
-        )    
+        Write-Output $prediction 
     }
 
-Function CheckSumFromTG($tlgr)  {
+Function CheckSumFromTG  {
+    param (
+        [string]$tlgr
+    )
         [uint16]$chksum=0
 
         for ($TB = 0; $TB -lt $tlgr.length; $TB++) {
@@ -114,10 +119,10 @@ Function CheckSumFromTG($tlgr)  {
                 # whote-host "Conversion to byte, or XOR failed" 
             }
             catch {
-                $errormessage = "Cannot convert to byte or cannot XOR char " + [int]$tlgr[$TB] + " at character position $TB, after '" + $tlgr.substring([Math]::Max( $TB-7,0), [Math]::Min( 7, $tlgr.length-$TB)) + "'"
+                throw "Not_a_Byte_ERROR:$TB"
 
-                throw $errormessage
-                break    # exit FOR loop and return
+                # exit FOR loop and return via catch of caller
+
             }
 
             
@@ -129,6 +134,50 @@ Function CheckSumFromTG($tlgr)  {
 
         return $chksum
     }
+
+Function RecordAbortiveError {      # Updates many global vars so specifying 'global:' for vars that are CHANGED is important.
+    param (
+        [string]$ErrorMessage,
+        [int]$ErrorPos = 0, # default value: 0 means "not provided"
+        [int]$ValidityError = -1  
+    )
+
+    $global:nFalseTelegram ++
+    if ($nTelegrams -ne 0 ) {
+        $global:rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
+        }
+    else {
+        $global:rateFalse = 0
+        }
+
+    $global:errorlog += $timestamp + ", "+ $ErrorMessage 
+    if ($ErrorPos -ne 0) {
+        $global:errorlog += [int]$telegram[$ErrorPos] + " at character position $ErrorPos, after '" + $telegram.substring([Math]::Max( $ErrorPos-7,0), [Math]::Min( 7, $telegram.length-$ErrorPos)) + "'" + ", rate of error: " + $rateFalse + " % or " + $nFalseTelegram
+        }
+    $global:errorlog +=  "`r`n"
+    $global:ValidityStats += "False," + $ValidityError + "`r`n"
+
+    Write-Output "$timestamp $ErrorMessage, rate of error: $rateFalse %  or $nFalseTelegram"
+    WriteErrorRatePrediction
+
+    $global:timestamp = "-No timestamp-(prev:" + $timestamp + ")"   # invalidate the timestamp until a new one is found
+
+
+    return
+}
+
+Function RecordCorrectedError {
+    param (
+        [string]$ErrorMessage,
+        [int]$ErrorPos = 0 # default value: 0 means "not provided"
+    )
+    $global:nFixedCks++
+    $global:ErrorCorrected = $nFixedCks
+    $global:errorlog += $timestamp
+    $global:errorlog += ", " + $ErrorMessage + " $nFixedCks telegrams fixed.`r`n"
+    Write-Host $ErrorMessage, " Corrected $nFixedCks"
+
+}
 
 # create an array of records
 $telegramRecords = New-Object System.Collections.Generic.List[DSMRTelegramRecordType]
@@ -198,8 +247,8 @@ switch -regex   ($_) {
 
 
     "\!([0-9A-Fa-f]{4})$" {   # sender checksum indicated by "!" and four hex numbers (upper or lower case accepted), followed by end of line. ( a series of 9 characters including the beginning and ending CRLF characters)
-            # to make it more robust we should test if this 7-character string occurs inside a data object (in a legitimate line of the telegram that can include arbitrary data)
-            # e.g. Can the utility service provider message 0-0:96.13.0(<message>) include "!" ?  
+            # to make it more robust we should test if this 9-character string occurs inside a data object (in a line of the telegram that allows arbitrary data)
+            # e.g. Can the utility service provider message 0-0:96.13.0(<message>) include CR, LF or "!" ?  
             # I did not find reference doc with sufficient details.  Best so far is https://www.netbeheernederland.nl/_upload/Files/Slimme_meter_15_a727fce1f1.pdf
 
         $telegram = $telegram + "!" 
@@ -213,22 +262,38 @@ switch -regex   ($_) {
         $ValidityStats += $timestamp + "," 
 
         try {
-            [uint16]$CalcChecksum =  CheckSumFromTG($telegram)
+            [uint16]$CalcChecksum =  CheckSumFromTG $telegram
         }
         catch {
+            if ( -not ($_ -match '^Not_a_Byte_ERROR:(\d+)$') ) {
+                throw
+                }
+            $TB = [int]$Matches[1]
+            Write-Host "Byte conversion or XOR error during checksum, at position $TB"
 
-            $nFalseTelegram ++
-            $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
+            if  ( 
+                ($TB -ge $telegram.length - 1) -or 
+                -not ($telegram.Substring($TB + 1) -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern)  
+                ) {
 
-            $errorlog += $timestamp + ", "+ $_ + ", rate of error: " + $rateFalse + " % or " + $nFalseTelegram +  "`r`n"
-            $ValidityStats += "False,`r`n"
+                RecordAbortiveError "Cannot convert to byte or cannot XOR char " $TB 0
 
-            Write-Output "$timestamp $_, rate of error: $rateFalse %  or $nFalseTelegram"
+                break       #   This exits the switch block, not only the Catch.
+                            #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
+                }
 
-            $timestamp = "-No timestamp-(prev:" + $timestamp + ")"   # invalidate the timestamp until a new one is found
+            RecordCorrectedError "Byte conversion error found pre-telegram:  $($telegram.substring(0,12)) Removing leading garbage. Telegram is now valid. "
+            $telegram = "/" + $Matches[0]
 
-            break       #   This exits the switch block, not only the Catch.
-                        #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
+            write-host "Byte conversion found pre-telegram. Removed. Proceeding. Telegram fixed at $timestamp. Corrected $nFixedCks"
+
+            try {
+            [uint16]$CalcChecksum =  CheckSumFromTG $telegram      # In case a second character also throws an error this is not adequate error handling. Should be in a WHILE loop?
+            }
+            catch {
+                RecordAbortiveError "After removing a char, another found with XOR or byte conversion error in checksum calculation. Aborting." 0 0
+                break
+            }
         }
         
 
@@ -285,6 +350,7 @@ switch -regex   ($_) {
             # Test if the first line of the noisy telegram includes a valid first line if the leading garbled bytes are disregarded. If so, it is likely that the line error only affects the first byte of the dispatched telegram and the leading zero bytes. 
             # If a valid first line is found in a corrupted telegram then we assume it marks the beginning of the correct telegram, chop off everything before it, and ascertain validity with an extra checksum calculation. 
 
+            try {
             if  ( ($telegram -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern) -and ( ( CheckSumFromTG( "/" + $Matches[0])) -eq $senderChksInt )  )  {  # it should ensure that if the comparison throws an error execution continues in the right script block.
                                                     #               Function call on the left of -eq must in parenthesis if type is uint16. Otherwise precedence or type casting is messed up
                                     
@@ -387,7 +453,23 @@ switch -regex   ($_) {
             break    # exit the Switch case for the terminating line (the line with "!<checksum>") in the telegram. Continue with starting fresh: looking for the next start of telegram in the same Switch in the next iterations.
 
             }
-            # issue: if an error is generated in the if statement ($telegram -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern) then neither of the branches execute but execution continues here.
+
+        }
+        catch { 
+            # second byte/xor error or unknown error. Exit with error log.
+            if (-not ($_ -match '^Not_a_Byte_ERROR:(\d+)$') ) {
+                throw
+                }
+            $TB = [int]$Matches[1]
+            Write-Host "Error in broad TRY around error correction code. Caught byte conversion or XOR error at $TB"
+
+            RecordAbortiveError "Cannot convert to byte or cannot XOR char while trying to make corrections. " $TB 0
+
+            break       #   This exits the switch block, not only the Catch.
+                        #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
+
+        }
+            # issue fixed with try-catch: if an error is generated in the if statement ($telegram -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern) then neither of the branches execute but execution continues here.
             # Pattern is tested to exclude any non-printable ASCII but there might be other reasons why a statement may generate an error.
         }
 
@@ -610,8 +692,8 @@ switch -regex   ($_) {
 
 
 }
-$outCSV = $inpLog + "-validity.csv"
-Out-File -FilePath $outCSV  -InputObject $ValidityStats   # this output file holds a record for each telegram whether correct or not. 
+$outPath = $inpLog + ".Test."
+Out-File -FilePath ($outPath + "Validity.csv")  -InputObject $ValidityStats   # this output file holds a record for each telegram whether correct or not. 
     # For erroneous (not corrected) telegrams it provides the number of unexpected chars. 
         # (minimum number as it does not attempt to find all incorrect chars.)
         # (for severe errors e.g. damaged checksum field the number of affected bytes is omitted)
@@ -630,11 +712,11 @@ if ($nTelegrams -ne 0 ) {
     WriteErrorRatePrediction
     
     $errorlog += "Total, fixed, remaining:  " + $nTelegrams + "  "  + $nFixedCks + "  " + $nFalseTelegram + " (" + $rateFalse + "% of total).  " + $rateErrorfix + " % of errors are fixed."  
-    Out-File -FilePath ($inpLog + ".Noise.csv")  -InputObject $errorlog   # this is an error log file. Only reports when an incoming telegram had errors
+    Out-File -FilePath ($outPath + "Noise.csv")  -InputObject $errorlog   # this is an error log file. Only reports when an incoming telegram had errors
     }
 
 
-$telegramRecords | Export-Csv -Path ($inpLog+"_Records.csv") -NoTypeInformation -UseCulture       # this is the main output file with "_Records.csv" appended to the input file name
+$telegramRecords | Export-Csv -Path ($outPath+"Records.csv") -NoTypeInformation -UseCulture       # this is the main output file with "_Records.csv" appended to the input file name
 
 if ( $MaxVtime -and $MaxAtime ) {
     write-output ("Maximum voltage: " + $maxV +  " on date " + $MaxVtime.Substring(2,4) + " at " + $MaxVtime.substring(6,4) + ".  Max current: " + $maxA + " A on date " + $MaxAtime.Substring(2,4) + " at " + $MaxAtime.Substring(6,4))
