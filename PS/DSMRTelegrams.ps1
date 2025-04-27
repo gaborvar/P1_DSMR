@@ -19,7 +19,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20250409.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20250423.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -152,12 +152,12 @@ Function RecordAbortiveError {      # Updates many global vars so specifying 'gl
 
     $global:errorlog += $timestamp + ", "+ $ErrorMessage 
     if ($ErrorPos -ne 0) {
-        $global:errorlog += [int]$telegram[$ErrorPos] + " at character position $ErrorPos, after '" + $telegram.substring([Math]::Max( $ErrorPos-7,0), [Math]::Min( 7, $telegram.length-$ErrorPos)) + "'" + ", rate of error: " + $rateFalse + " % or " + $nFalseTelegram
+        $global:errorlog += " Char $([int]$telegram[$ErrorPos]) at position $ErrorPos, after '" + $telegram.substring([Math]::Max( $ErrorPos-7,0), [Math]::Min( 7, $telegram.length-$ErrorPos)) + "'" + ", rate of error: " + $rateFalse + " % or " + $nFalseTelegram
         }
     $global:errorlog +=  "`r`n"
     $global:ValidityStats += "False," + $ValidityError + "`r`n"
 
-    Write-Output "$timestamp $ErrorMessage, rate of error: $rateFalse %  or $nFalseTelegram"
+    Write-Output "$timestamp $ErrorMessage position $ErrorPos, rate of error: $rateFalse %  or $nFalseTelegram"
     WriteErrorRatePrediction
 
     $global:timestamp = "-No timestamp-(prev:" + $timestamp + ")"   # invalidate the timestamp until a new one is found
@@ -276,7 +276,7 @@ switch -regex   ($_) {
                 -not ($telegram.Substring($TB + 1) -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern)  
                 ) {
 
-                RecordAbortiveError "Cannot convert to byte or cannot XOR char " $TB 0
+                RecordAbortiveError "Cannot convert to byte or cannot XOR char. " $TB 0
 
                 break       #   This exits the switch block, not only the Catch.
                             #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
@@ -285,7 +285,7 @@ switch -regex   ($_) {
             RecordCorrectedError "Byte conversion error found pre-telegram:  $($telegram.substring(0,12)) Removing leading garbage. Telegram is now valid. "
             $telegram = "/" + $Matches[0]
 
-            write-host "Byte conversion found pre-telegram. Removed. Proceeding. Telegram fixed at $timestamp. Corrected $nFixedCks"
+            write-host "Byte conversion error pre-telegram. Removed. Proceeding. Telegram fixed at $timestamp. Corrected $nFixedCks"
 
             try {
             [uint16]$CalcChecksum =  CheckSumFromTG $telegram      # In case a second character also throws an error this is not adequate error handling. Should be in a WHILE loop?
@@ -403,7 +403,7 @@ switch -regex   ($_) {
                 # Future error correction hints: 
                 #   (done) Replace in the custom service provider message after '0-0:96.13.0(' all chars with xFF and add extra xFF if shorter due to error that created UTF8 prefix character
                 #   (done) Check if chars exist before the service provider message after the previous ')' and if so remove them by matching obis code pattern '0-0:96.13.0' 
-                #   (future) apply correction of first line to telegrams that suffer byte conversion error in the pre-telegram garbage
+                #   (done) apply correction of first line to telegrams that suffer byte conversion error in the pre-telegram garbage
                 # then validate checksum again
 
              
@@ -463,7 +463,7 @@ switch -regex   ($_) {
             $TB = [int]$Matches[1]
             Write-Host "Error in broad TRY around error correction code. Caught byte conversion or XOR error at $TB"
 
-            RecordAbortiveError "Cannot convert to byte or cannot XOR char while trying to make corrections. " $TB 0
+            RecordAbortiveError "Cannot convert to byte or cannot XOR char while trying to make corrections in broad TRY-CATCH. " $TB 0
 
             break       #   This exits the switch block, not only the Catch.
                         #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
