@@ -19,7 +19,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20250423.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 20250105.log"   # This is the input file that holds the log of the full serial communication from the meter.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -98,7 +98,7 @@ Function WriteErrorRatePrediction() {
             "hours " +
             "or "
             }
-        $prediction += "$( [math]::Round( ($nFalseTelegram + 1 ) / $nTelegrams * 100, 2 )) % " +
+        $prediction += "$( [math]::Round( ($nFalseTelegram + 1 ) / ($nTelegrams + 1 ) * 100, 2 )) % " +
         "if another error occured immediately." 
         Write-Output $prediction 
     }
@@ -110,23 +110,21 @@ Function CheckSumFromTG  {
         [uint16]$chksum=0
 
         for ($TB = 0; $TB -lt $tlgr.length; $TB++) {
-       # write-host ($Telegram[$TB], [System.Text.Encoding]::ASCII.GetBytes($telegram[$TB])[0])
 
-
-            try {
-
-                $chksum = $chksum -bxor ( [byte]$tlgr[$TB] )
-                # whote-host "Conversion to byte, or XOR failed" 
-            }
-            catch {
-                throw "Not_a_Byte_ERROR:$TB"
-
-                # exit FOR loop and return via catch of caller
-
-            }
-
+            if ([int]$tlgr[$TB] -le 255  ) {
             
-            $chksum = $ChksumLookup[$chksum]   # alternative with lookup. Lookup takes 15 ms vs 100 ms for each incoming byte on a specific i7-7700 CPU @ 3.60GHz system.
+                $chksum = $ChksumLookup[$chksum -bxor ( [byte]$tlgr[$TB] )]   # alternative with lookup. Lookup takes 15 ms vs 100 ms for each incoming byte on a specific i7-7700 CPU @ 3.60GHz system.
+
+            } else {
+                $start = [Math]::Max($TB - 20, 0)
+                $length = [Math]::Min(30, $tlgr.Length - $start)
+                write-host ("Double byte code found while calculating checksum in $timestamp. Position: $TB, character: $([int]$tlgr[$TB]), $($tlgr.Substring($start, $length))" )
+                if ([int]$tlgr[$TB] -eq 729) {  #  PWSH 7.x get-content -Encoding ansi translates xFF to 729 - in case we cannot control encoding. 
+                    Write-Host ("Code 729 is found while calculating checksum. It may indicate that code page 1250 was assumed by get-content while ingesting. Should be 1252 or no translation.")
+                }
+                throw "Not_a_Byte_ERROR:$TB"
+            }
+
 
 #            $endTime = Get-Date
 #            $endArithmTime = get-date
@@ -177,7 +175,7 @@ Function RecordCorrectedError {
     $global:errorlog += ", " + $ErrorMessage + " $nFixedCks telegrams fixed.`r`n"
     Write-Host $ErrorMessage, " Corrected $nFixedCks"
 
-}
+    }
 
 # create an array of records
 $telegramRecords = New-Object System.Collections.Generic.List[DSMRTelegramRecordType]
@@ -232,8 +230,21 @@ $ChksumLookup = New-Object uint16[](65536)
 ##############################################################################################################################################
 
 #     Main loop starts here reading the port log file line by line
+#     On char encoding: 
+# https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/get-content?view=powershell-5.1
+# https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/get-content?view=powershell-7.5
+# in 5.1: "Default Uses the encoding that corresponds to the system's active code page (usually ANSI)."
 
-Get-Content $inpLog | ForEach-Object {
+$StartTime = [datetime]::Now
+
+if ($PSversiontable.PSVersion.Major -ge 6) {
+        $PSenc = "windows-1252"
+    }
+    else {
+        $PSenc = "Default"
+    }
+
+Get-Content -Path $inpLog -Encoding $PSenc | ForEach-Object {
 
 switch -regex   ($_) {
 
@@ -251,15 +262,51 @@ switch -regex   ($_) {
             # e.g. Can the utility service provider message 0-0:96.13.0(<message>) include CR, LF or "!" ?  
             # I did not find reference doc with sufficient details.  Best so far is https://www.netbeheernederland.nl/_upload/Files/Slimme_meter_15_a727fce1f1.pdf
 
-        $telegram = $telegram + "!" 
 
         $SenderChks = $Matches[1]
-        
 
-#            $startTime = get-date 
 
         $nTelegrams ++
         $ValidityStats += $timestamp + "," 
+
+        if ($false) {
+
+        # Check if error would cause checksum calculation to fail, e.g. unnecessary mapping by Powershell ingest to >255 unicode
+        # Step 1: Convert string to char array
+        $charArray = $telegram.ToCharArray()
+
+        # Step 2: Replace and validate
+        for ($i = 0; $i -lt $charArray.Length; $i++) {
+            $code = [int]$charArray[$i]
+
+            if ($code -eq 729) {        # PWSH 7.x get-content -Encoding ansi replaces xFF with 729
+                # Replace bad Unicode (˙) with 255
+                $charArray[$i] = [char]255
+                Write-Output "729 spotted and replaced in $timestamp"
+            }
+            elseif ($code -eq 402) {    # Powershell 5.1 replaces x83 with 402. Probably it assumes ansi 1252
+                $charArray[$i] = [char]131
+            }
+            elseif ( $code -gt 255 ) {
+                write-output "i: $i,  code: $code"
+                RecordAbortiveError "Invalid character code ingested, not trying to fix." -ErrorPos $i
+                break
+            }
+        }
+        if ($code -gt 255) {
+            break
+        }
+
+        # Step 3: Rebuild the cleaned string
+        $sb = [System.Text.StringBuilder]::new($charArray.Length)
+        $null = $sb.Append($charArray)
+
+
+        $telegram = $sb.ToString() + "!" 
+    } else {
+        $telegram += "!"
+    }
+
 
         try {
             [uint16]$CalcChecksum =  CheckSumFromTG $telegram
@@ -269,29 +316,29 @@ switch -regex   ($_) {
                 throw
                 }
             $TB = [int]$Matches[1]
-            Write-Host "Byte conversion or XOR error during checksum, at position $TB"
+            # Write-Host "Double-byte code found, cannot cast to byte during checksum, at position $TB in telegram $timestamp."
 
             if  ( 
                 ($TB -ge $telegram.length - 1) -or 
                 -not ($telegram.Substring($TB + 1) -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern)  
                 ) {
 
-                RecordAbortiveError "Cannot convert to byte or cannot XOR char. " $TB 0
+                RecordAbortiveError "Cannot convert an ingested code back to byte. It is probably noise." -ErrorPos $TB
 
                 break       #   This exits the switch block, not only the Catch.
                             #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
                 }
 
-            RecordCorrectedError "Byte conversion error found pre-telegram:  $($telegram.substring(0,12)) Removing leading garbage. Telegram is now valid. "
+            RecordCorrectedError "Byte conversion error found pre-telegram:  $($telegram.substring(0,12)) Removing leading garbage. "
             $telegram = "/" + $Matches[0]
 
-            write-host "Byte conversion error pre-telegram. Removed. Proceeding. Telegram fixed at $timestamp. Corrected $nFixedCks"
+            write-host "Byte conversion error pre-telegram. Removed. Proceeding. Telegram boundaries are fixed at $timestamp. Corrected $nFixedCks"
 
             try {
             [uint16]$CalcChecksum =  CheckSumFromTG $telegram      # In case a second character also throws an error this is not adequate error handling. Should be in a WHILE loop?
             }
             catch {
-                RecordAbortiveError "After removing a char, another found with XOR or byte conversion error in checksum calculation. Aborting." 0 0
+                RecordAbortiveError "After removing pre-telegram noise includig a double-byte character, another double-byte char is found in checksum calculation. Aborting telegram." -ErrorPos 0
                 break
             }
         }
@@ -413,6 +460,7 @@ switch -regex   ($_) {
         
             # Give up. This telegram is unhealable. We just record the error parameters and exit telegram processing without recording the values in TelegramRec
 
+            # Change this to call RecordAbortiveError -ErrorMessage "..." -ErrorPos 
             $nFalseTelegram ++
             if ($nTelegrams -ne 0 ) {
                 $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
@@ -463,7 +511,7 @@ switch -regex   ($_) {
             $TB = [int]$Matches[1]
             Write-Host "Error in broad TRY around error correction code. Caught byte conversion or XOR error at $TB"
 
-            RecordAbortiveError "Cannot convert to byte or cannot XOR char while trying to make corrections in broad TRY-CATCH. " $TB 0
+            RecordAbortiveError "Cannot convert to byte or cannot XOR char while trying to make corrections in broad TRY-CATCH. " -ErrorPos $TB
 
             break       #   This exits the switch block, not only the Catch.
                         #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
@@ -692,8 +740,17 @@ switch -regex   ($_) {
 
 
 }
-$outPath = $inpLog + ".Test."
+
+if ($PSversiontable.PSVersion.Major -ge 6) {
+    $PSenc = "utf8NoBOM"
+}
+else {
+    $PSenc = "UTF8"
+}
+
+$outPath = $inpLog + ".Test.NoPreSweep.PS"+ $PSVersionTable.PSVersion.Major + $PSVersionTable.PSVersion.Minor
 Out-File -FilePath ($outPath + "Validity.csv")  -InputObject $ValidityStats   # this output file holds a record for each telegram whether correct or not. 
+    # In Windows Powershell 5.1, Out-File creates UTF-16LE. PowerShell defaults to utf8NoBOM for all output.
     # For erroneous (not corrected) telegrams it provides the number of unexpected chars. 
         # (minimum number as it does not attempt to find all incorrect chars.)
         # (for severe errors e.g. damaged checksum field the number of affected bytes is omitted)
@@ -711,12 +768,14 @@ if ($nTelegrams -ne 0 ) {
     Write-Output "$nFalseTelegram checksums are still false. Rate of error: $rateFalse % of total. $nFixedCks of $nTelegrams telegrams ($rateFixedChks %) are fixed in '$inpLog'"
     WriteErrorRatePrediction
     
-    $errorlog += "Total, fixed, remaining:  " + $nTelegrams + "  "  + $nFixedCks + "  " + $nFalseTelegram + " (" + $rateFalse + "% of total).  " + $rateErrorfix + " % of errors are fixed."  
+    $errorlog += "Total, fixed, remaining:  " + $nTelegrams + "  "  + $nFixedCks + "  " + $nFalseTelegram + " (" + $rateFalse + "% of total).  " + $rateErrorfix + " % of errors are fixed.`r`n"
+    $duration = ([datetime]::Now - $StartTime).totalseconds * 1000
+    $errorlog +=  "Exec time: $([math]::Round($duration/$nTelegrams,2))  msec/telegram"
     Out-File -FilePath ($outPath + "Noise.csv")  -InputObject $errorlog   # this is an error log file. Only reports when an incoming telegram had errors
     }
 
 
-$telegramRecords | Export-Csv -Path ($outPath+"Records.csv") -NoTypeInformation -UseCulture       # this is the main output file with "_Records.csv" appended to the input file name
+$telegramRecords | Export-Csv -Path ($outPath+"Records.csv") -NoTypeInformation -UseCulture -Encoding $PSenc     # this is the main output file with "_Records.csv" appended to the input file name
 
 if ( $MaxVtime -and $MaxAtime ) {
     write-output ("Maximum voltage: " + $maxV +  " on date " + $MaxVtime.Substring(2,4) + " at " + $MaxVtime.substring(6,4) + ".  Max current: " + $maxA + " A on date " + $MaxAtime.Substring(2,4) + " at " + $MaxAtime.Substring(6,4))
