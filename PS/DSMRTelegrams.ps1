@@ -1,6 +1,6 @@
 ﻿# Reads DSMR P1 telegrams from the serial log file. Relevant fields of the telegrams are written to a CSV (separator is semicolon) file as a table of records. 
 # Prevents invalid data by checking for errors in the telegrams and either fixing them or dropping if a fix would be too complex.
-# Calculates checksum from each telegram and writes TRUE for a match or FALSE for incorrect checksum to a CSV file.
+# Calculates checksum from each telegram and writes TRUE for a match or FALSE for incorrect checksum to a CSV file. (currently inactive for performance - $ValidityStats)
 # CSV output is intended to be processed by Excel. See charts separately. 
 # Can be extended with further parsing of the telegrams. Currently it :
     # checks for voltage above regulated levels and marks the record. 
@@ -19,11 +19,11 @@
 
 
 
-$inpLog = "P1 meter w solar - 20250105.log"   # This is the input file that holds the log of the full serial communication from the meter.
+$inpLog = "P1 meter w solar - 202411*.log"   # This is the input file that holds the log of the full serial communication from the meter. Can use * wildcard.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
-$ValidityStats = ""  # will store a list of every telegram timestamp and a boolean to state if the telegram is valid. If False, the number of invalid chars is given (i.e. ASCII CRLF or xFF). If True, the added integer provides the number of fixed records since the beginning.
+# $ValidityStats = ""  # will store a list of every telegram timestamp and a boolean to state if the telegram is valid. If False, the number of invalid chars is given (i.e. ASCII CRLF or xFF). If True, the added integer provides the number of fixed records since the beginning.
 $telegram = ""
 $timestamp = "-No timestamp-"
 $prevProviderMessage = ""
@@ -150,12 +150,15 @@ Function RecordAbortiveError {      # Updates many global vars so specifying 'gl
 
     $global:errorlog += $timestamp + ", "+ $ErrorMessage 
     if ($ErrorPos -ne 0) {
-        $global:errorlog += " Char $([int]$telegram[$ErrorPos]) at position $ErrorPos, after '" + $telegram.substring([Math]::Max( $ErrorPos-7,0), [Math]::Min( 7, $telegram.length-$ErrorPos)) + "'" + ", rate of error: " + $rateFalse + " % or " + $nFalseTelegram
+        $start = [Math]::Max($ErrorPos - 10, 0)
+        $length = [Math]::Min(20, $telegram.Length - $start)
+
+        $global:errorlog += " Char $([int]$telegram[$ErrorPos]) at position $ErrorPos, around '" + $telegram.substring($start, $length) + "'" + ", rate of error: " + $rateFalse + " % or " + $nFalseTelegram
         }
     $global:errorlog +=  "`r`n"
     $global:ValidityStats += "False," + $ValidityError + "`r`n"
 
-    Write-Output "$timestamp $ErrorMessage position $ErrorPos, rate of error: $rateFalse %  or $nFalseTelegram"
+    Write-Output "$timestamp $ErrorMessage position $ErrorPos, around '$($telegram.substring($start, $length))' rate of error: $rateFalse %  or $nFalseTelegram"
     WriteErrorRatePrediction
 
     $global:timestamp = "-No timestamp-(prev:" + $timestamp + ")"   # invalidate the timestamp until a new one is found
@@ -248,10 +251,13 @@ Get-Content -Path $inpLog -Encoding $PSenc | ForEach-Object {
 
 switch -regex   ($_) {
 
-    "(/.*$)" {   # start of telegram indicated by /
+    "(/.*$)" {      # start of telegram indicated by / 
+                    # Not necessarily starts with "/" in case of pre-telegram noise. We handle such noise later. 
+                    # May include more than one "/" if CRLF's were dropped and two "/" signs fall into the same line
 
-        $telegram = $Matches[1] + "`r`n"   # anything in the line before a "/" is dropped. Anything before this line is also dropped (a telegram fragment). Normally this drops nothing except when the closing "!" of the previous telegram was not found
+        $telegram = $Matches[1] + "`r`n"   # anything in the line before a "/" is dropped. Anything before this line is also dropped (a telegram fragment). Normally this drops nothing except when the previous telegram was aborted.
                  # In case a telegram fragment was collected before this new telegram, its timestamp is not reset here. If the "/" is an error, by removing the timestamp we lose track of the record, cannot report the error correctly.
+                 # If the leading "/" is corrupted, we may still identify correct telegram start later when the closing "!" is detected and the telegram can be analysed."
 
         break
         }
@@ -267,7 +273,7 @@ switch -regex   ($_) {
 
 
         $nTelegrams ++
-        $ValidityStats += $timestamp + "," 
+        # $ValidityStats += $timestamp + "," 
 
         if ($false) {
 
@@ -323,7 +329,7 @@ switch -regex   ($_) {
                 -not ($telegram.Substring($TB + 1) -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern)  
                 ) {
 
-                RecordAbortiveError "Cannot convert an ingested code back to byte. It is probably noise." -ErrorPos $TB
+                RecordAbortiveError "Cannot convert an ingested code back to byte. No valid telegram is found after the error position." -ErrorPos $TB
 
                 break       #   This exits the switch block, not only the Catch.
                             #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
@@ -332,13 +338,18 @@ switch -regex   ($_) {
             RecordCorrectedError "Byte conversion error found pre-telegram:  $($telegram.substring(0,12)) Removing leading garbage. "
             $telegram = "/" + $Matches[0]
 
-            write-host "Byte conversion error pre-telegram. Removed. Proceeding. Telegram boundaries are fixed at $timestamp. Corrected $nFixedCks"
+            # write-host "Byte conversion error pre-telegram. Removed. Proceeding. Telegram boundaries are fixed at $timestamp. Corrected $nFixedCks"
 
             try {
             [uint16]$CalcChecksum =  CheckSumFromTG $telegram      # In case a second character also throws an error this is not adequate error handling. Should be in a WHILE loop?
             }
             catch {
-                RecordAbortiveError "After removing pre-telegram noise includig a double-byte character, another double-byte char is found in checksum calculation. Aborting telegram." -ErrorPos 0
+                if ( -not ($_ -match '^Not_a_Byte_ERROR:(\d+)$') ) {
+                    throw
+                    }
+                $TB = [int]$Matches[1]
+    
+                RecordAbortiveError "After removing pre-telegram noise including a double-byte character, another double-byte char is found in checksum calculation. Aborting telegram." -ErrorPos $TB
                 break
             }
         }
@@ -349,7 +360,7 @@ switch -regex   ($_) {
         } 
         catch {
             $errorlog += $timestamp + ", Unreadable CRC in telegram.`r`n"
-            $ValidityStats += "False,`r`n"
+            # $ValidityStats += "False,`r`n"
 
             $nFalseTelegram ++
             $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
@@ -490,7 +501,7 @@ switch -regex   ($_) {
 
             $errorlog += " " + $rateFalse + " % error rate or " + $nFalseTelegram + " telegrams.`r`n"
 
-            $ValidityStats +=  "False,"  +   $NoisyChars.Length + "`r`n"  # add the number of chars found invalid. Lower estimate for errors.
+            # $ValidityStats +=  "False,"  +   $NoisyChars.Length + "`r`n"  # add the number of chars found invalid. Lower estimate for errors.
 
 
             #  Remove leftovers from this telegram that would contaminate the next. We discard fragments, although it might be possible to fix the error by examining remaining lines. For future improvement.
@@ -526,7 +537,7 @@ switch -regex   ($_) {
 
      # the current telegram should be syntactically correct from this point on, e.g. $timestamp should exist and be meaningful. If it weren't it would have failed the checksum test
 
-            $ValidityStats +=  "True,"  +   $ErrorCorrected + "`r`n"      
+            # $ValidityStats +=  "True,"  +   $ErrorCorrected + "`r`n"      
             # If the record is valid then the additional field informs whether it had valid CRC (last field is 0) or it was corrected (last field is the number of telegrams fixed)
             # todo: check if $Errorcorrected variable is needed. $nFixedCks seems reusable here
 
@@ -741,15 +752,15 @@ switch -regex   ($_) {
 
 }
 
-if ($PSversiontable.PSVersion.Major -ge 6) {
+if ($PSversiontable.PSVersion.Major -ge 6) {    # Trying to limit size of output files. To be tested with both 5.1 and pwsh 7.x
     $PSenc = "utf8NoBOM"
 }
 else {
     $PSenc = "UTF8"
 }
 
-$outPath = $inpLog + ".Test.NoPreSweep.PS"+ $PSVersionTable.PSVersion.Major + $PSVersionTable.PSVersion.Minor
-Out-File -FilePath ($outPath + "Validity.csv")  -InputObject $ValidityStats   # this output file holds a record for each telegram whether correct or not. 
+$outPath = ( $inpLog -replace '\*', '' ) + ".Test.NoPreSweep.PS"+ $PSVersionTable.PSVersion.Major + $PSVersionTable.PSVersion.Minor
+# Out-File -FilePath ($outPath + "Validity.csv")  -InputObject $ValidityStats   # this output file holds a record for each telegram whether correct or not. 
     # In Windows Powershell 5.1, Out-File creates UTF-16LE. PowerShell defaults to utf8NoBOM for all output.
     # For erroneous (not corrected) telegrams it provides the number of unexpected chars. 
         # (minimum number as it does not attempt to find all incorrect chars.)
