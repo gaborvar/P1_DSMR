@@ -15,11 +15,11 @@
         # Timestamp could be calculated from the previous and the next telegram's timestamp. (not implemented)
 # This is sufficient if error rate is fairly low. For error rates > 10% per telegram (which corresponds less than 0.005% per byte) or larger you probably need more sophisticated error handling.
 
-# Takes several minutes to process a daily worth of (24x360) telegrams. File operations could be optimised.
+# Takes a minute to process a daily worth of (24x360) telegrams. Typical performance is 5 msec per record (roughly half an hour per month, on i7-7700 CPU). File operations could be optimised.
 
 
 
-$inpLog = "P1 meter w solar - 202411*.log"   # This is the input file that holds the log of the full serial communication from the meter. Can use * wildcard.
+$inpLog = "P1 meter w solar - 20250524.log"   # This is the input file that holds the log of the full serial communication from the meter. Can use * wildcard.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -113,7 +113,7 @@ Function CheckSumFromTG  {
 
             if ([int]$tlgr[$TB] -le 255  ) {
             
-                $chksum = $ChksumLookup[$chksum -bxor ( [byte]$tlgr[$TB] )]   # alternative with lookup. Lookup takes 15 ms vs 100 ms for each incoming byte on a specific i7-7700 CPU @ 3.60GHz system.
+                $chksum = $ChksumLookup[$chksum -bxor ( [byte]$tlgr[$TB] )]   # lookup instead of calculation. 
 
             } else {
                 $start = [Math]::Max($TB - 20, 0)
@@ -335,13 +335,13 @@ switch -regex   ($_) {
                             #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
                 }
 
-            RecordCorrectedError "Byte conversion error found pre-telegram:  $($telegram.substring(0,12)) Removing leading garbage. "
+            RecordCorrectedError "Byte conversion error found pre-telegram:  $($telegram.substring( 0, [Math]::Min(20, $telegram.Length ))) Removing leading garbage. "
             $telegram = "/" + $Matches[0]
 
             # write-host "Byte conversion error pre-telegram. Removed. Proceeding. Telegram boundaries are fixed at $timestamp. Corrected $nFixedCks"
 
             try {
-            [uint16]$CalcChecksum =  CheckSumFromTG $telegram      # In case a second character also throws an error this is not adequate error handling. Should be in a WHILE loop?
+            [uint16]$CalcChecksum =  CheckSumFromTG $telegram      # In case a second character also throws an error 
             }
             catch {
                 if ( -not ($_ -match '^Not_a_Byte_ERROR:(\d+)$') ) {
@@ -482,18 +482,21 @@ switch -regex   ($_) {
             $errorlog += $timestamp + ", " + $CalcChecksum
 
             Write-Output "Checksum error at $timestamp, rate of error: $rateFalse %  or $nFalseTelegram"            
-            WriteErrorRatePrediction
 
             $pattern = '[\x00-\x09\x0B-\x0C\x0E-\x1F\x80-\xFE]'   # matches non-ASCII characters except xFF, CR and LF. These are not expected in a DSMR telegram. (except perhaps the service provider message) 
             $NoisyChars = $telegram | Select-String -Pattern $pattern -AllMatches | ForEach-Object { $_.Matches }   # select-string operates on all $telegram at once, not per line.
-            
+
             foreach ($NChar in $NoisyChars) {
-                # Write-Host " Non-ASCII character '$($NChar.Value)' at position $($NChar.Index)" 
+                Write-Host " Non-ASCII character '$($NChar.Value)' at position $($NChar.Index)" 
                 $errorlog += ", " + $NChar.Index + ": " +  [int]($NChar.Value[0])
                 }
 
-            if ($noisychars -and ($NChar.index -lt ($telegram.Length-6) ) ) { 
-                $errorlog += " before '" + $telegram.substring($NChar.index+1, 5)  +"'  " 
+                WriteErrorRatePrediction
+
+            if ( $NoisyChars ) {
+                if ($NChar.index -lt ($telegram.Length-6) ) {
+                    $errorlog += " before '" + $telegram.substring($NChar.index+1, 5)  +"'  " 
+                    }
                 }
                 else {
                 $errorlog+= ", no invalid char but telegram failed for another reason.  "
@@ -760,7 +763,7 @@ else {
 }
 
 $outPath = ( $inpLog -replace '\*', '' ) + ".Test.NoPreSweep.PS"+ $PSVersionTable.PSVersion.Major + $PSVersionTable.PSVersion.Minor
-# Out-File -FilePath ($outPath + "Validity.csv")  -InputObject $ValidityStats   # this output file holds a record for each telegram whether correct or not. 
+# Out-File -FilePath ($outPath + "Validity.csv")  -InputObject $ValidityStats -Encoding $PSenc    # this output file holds a record for each telegram whether correct or not. 
     # In Windows Powershell 5.1, Out-File creates UTF-16LE. PowerShell defaults to utf8NoBOM for all output.
     # For erroneous (not corrected) telegrams it provides the number of unexpected chars. 
         # (minimum number as it does not attempt to find all incorrect chars.)
