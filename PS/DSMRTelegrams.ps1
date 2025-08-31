@@ -19,7 +19,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20250524.log"   # This is the input file that holds the log of the full serial communication from the meter. Can use * wildcard.
+$inpLog = "P1 meter w solar - 20250830.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -167,7 +167,7 @@ Function RecordAbortiveError {      # Updates many global vars so specifying 'gl
     return
 }
 
-Function RecordCorrectedError {
+Function RecordCorrectedError {     # Updates global vars so '$global:' prefix for CHANGED vars is important.
     param (
         [string]$ErrorMessage,
         [int]$ErrorPos = 0 # default value: 0 means "not provided"
@@ -295,7 +295,7 @@ switch -regex   ($_) {
             }
             elseif ( $code -gt 255 ) {
                 write-output "i: $i,  code: $code"
-                RecordAbortiveError "Invalid character code ingested, not trying to fix." -ErrorPos $i
+                RecordAbortiveError "Invalid character code ingested, not trying to fix." -ErrorPos $i      # Updates global variables and writes error message
                 break
             }
         }
@@ -329,14 +329,14 @@ switch -regex   ($_) {
                 -not ($telegram.Substring($TB + 1) -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern)  
                 ) {
 
-                RecordAbortiveError "Cannot convert an ingested code back to byte. No valid telegram is found after the error position." -ErrorPos $TB
+                RecordAbortiveError "Cannot convert an ingested code back to byte. No valid telegram is found after the error position." -ErrorPos $TB      # Updates global variables and writes error message
 
                 break       #   This exits the switch block, not only the Catch.
                             #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
                 }
 
-            RecordCorrectedError "Byte conversion error found pre-telegram:  $($telegram.substring( 0, [Math]::Min(20, $telegram.Length ))) Removing leading garbage. "
-            $telegram = "/" + $Matches[0]
+            RecordCorrectedError "Byte conversion error found pre-telegram:  $($telegram.substring( 0, [Math]::Min(20, $telegram.Length ))) Removing leading garbage. "     # Changes global variables
+            $telegram = "/" + $Matches[0]       # RecordCorrectedError routine should preserve $Matches
 
             # write-host "Byte conversion error pre-telegram. Removed. Proceeding. Telegram boundaries are fixed at $timestamp. Corrected $nFixedCks"
 
@@ -349,7 +349,7 @@ switch -regex   ($_) {
                     }
                 $TB = [int]$Matches[1]
     
-                RecordAbortiveError "After removing pre-telegram noise including a double-byte character, another double-byte char is found in checksum calculation. Aborting telegram." -ErrorPos $TB
+                RecordAbortiveError "After removing pre-telegram noise including a double-byte character, another double-byte char is found in checksum calculation. Aborting telegram." -ErrorPos $TB      # Updates global variables and writes error message
                 break
             }
         }
@@ -458,7 +458,7 @@ switch -regex   ($_) {
                 }
 
 
-                # Future error correction hints: 
+                # Error correction implemented: 
                 #   (done) Replace in the custom service provider message after '0-0:96.13.0(' all chars with xFF and add extra xFF if shorter due to error that created UTF8 prefix character
                 #   (done) Check if chars exist before the service provider message after the previous ')' and if so remove them by matching obis code pattern '0-0:96.13.0' 
                 #   (done) apply correction of first line to telegrams that suffer byte conversion error in the pre-telegram garbage
@@ -516,24 +516,25 @@ switch -regex   ($_) {
 
             }
 
-        }
-        catch { 
-            # second byte/xor error or unknown error. Exit with error log.
-            if (-not ($_ -match '^Not_a_Byte_ERROR:(\d+)$') ) {
-                throw
-                }
-            $TB = [int]$Matches[1]
-            Write-Host "Error in broad TRY around error correction code. Caught byte conversion or XOR error at $TB"
+            }
+            catch { 
+            # Issue fixed with this try-catch: if an error is generated in the if statement ($telegram -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern) then neither of the branches execute but execution would proceed to recording the false telegram.
+            # Pattern is tested to exclude any non-printable ASCII but there might be other unexpected reasons why a statement may generate an error.
 
-            RecordAbortiveError "Cannot convert to byte or cannot XOR char while trying to make corrections in broad TRY-CATCH. " -ErrorPos $TB
+                # second byte/xor error occured or unknown error occured. Exit with error log entry and prevent the recording of the telegram.
+                if (-not ($_ -match '^Not_a_Byte_ERROR:(\d+)$') ) {
+                    throw
+                    }
+                $TB = [int]$Matches[1]
+                # Write-Host "Error in broad TRY around error correction code. Caught byte conversion or XOR error at $TB"
 
-            break       #   This exits the switch block, not only the Catch.
-                        #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
+                RecordAbortiveError "Cannot convert to byte or cannot XOR char while trying to fix a checksum error. " -ErrorPos $TB     # Updates global variables and writes error message
 
-        }
-            # issue fixed with try-catch: if an error is generated in the if statement ($telegram -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern) then neither of the branches execute but execution continues here.
-            # Pattern is tested to exclude any non-printable ASCII but there might be other reasons why a statement may generate an error.
-        }
+                break       #   This exits the switch block, not only the Catch.
+                            #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
+
+            }
+        }           # handling checksum error ends here 
 
 
 
