@@ -19,7 +19,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20250830.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
+$inpLog = "P1 meter w solar - 20250910.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -156,7 +156,7 @@ Function RecordAbortiveError {      # Updates many global vars so specifying 'gl
         $global:errorlog += " Char $([int]$telegram[$ErrorPos]) at position $ErrorPos, around '" + $telegram.substring($start, $length) + "'" + ", rate of error: " + $rateFalse + " % or " + $nFalseTelegram
         }
     $global:errorlog +=  "`r`n"
-    $global:ValidityStats += "False," + $ValidityError + "`r`n"
+    # $global:ValidityStats += "False," + $ValidityError + "`r`n"
 
     Write-Output "$timestamp $ErrorMessage position $ErrorPos, around '$($telegram.substring($start, $length))' rate of error: $rateFalse %  or $nFalseTelegram"
     WriteErrorRatePrediction
@@ -173,7 +173,7 @@ Function RecordCorrectedError {     # Updates global vars so '$global:' prefix f
         [int]$ErrorPos = 0 # default value: 0 means "not provided"
     )
     $global:nFixedCks++
-    $global:ErrorCorrected = $nFixedCks
+
     $global:errorlog += $timestamp
     $global:errorlog += ", " + $ErrorMessage + " $nFixedCks telegrams fixed.`r`n"
     Write-Host $ErrorMessage, " Corrected $nFixedCks"
@@ -275,7 +275,10 @@ switch -regex   ($_) {
         $nTelegrams ++
         # $ValidityStats += $timestamp + "," 
 
-        if ($false) {
+        if ($false) {       # We don't use this preprocessing code block currently 
+                            # Purpose is to fix relatively frequent character code mapping issues caused by overly diligent character mapping of Powershell. 
+                            # Slows down all processing for little gain. 
+                            # We can detect erroneous mappings while computing CRC and mitigate them by setting the least intrusive PS encoding (1252 in pwsh and Default in 5.1)
 
         # Check if error would cause checksum calculation to fail, e.g. unnecessary mapping by Powershell ingest to >255 unicode
         # Step 1: Convert string to char array
@@ -380,8 +383,6 @@ switch -regex   ($_) {
 
 
 
-        $ErrorCorrected = 0
-
         # [uint16]$ChksumTGCorrected = 0
         
         if ($senderChksInt -ne $CalcChecksum ) {    # if checksums do not match handle the error here by trying to substitute suspect bytes. Otherwise skip forward to process telegram into a record.
@@ -415,7 +416,6 @@ switch -regex   ($_) {
                                                     
             # Success, proceed to data extraction to TelegramRec after fixing the first byte of $telegram
                 $nFixedCks++
-                $Errorcorrected = $nFixedCks
                 $errorlog += $timestamp
                 $errorlog += ", Tested for garbled characters in the first line $($telegram.substring(0,12)) and removed them if found. Telegram is now valid.  $nFixedCks telegrams fixed."
                 # $errorlog +=       # compare to [convert]::ToString(([int][char]"/"),2)
@@ -450,7 +450,6 @@ switch -regex   ($_) {
                 }
                                                 
                 $nFixedCks++
-                $Errorcorrected = $nFixedCks
 
                 Write-Output ($timestamp + " Replaced the provider message with:   " + $prevProviderMessage + "    Corrected $nFixedCks" )
                 $errorlog += $timestamp + ", Replaced the service provider message with the previous telegram's:   " + $prevProviderMessage + "  $nFixedCks telegrams fixed.`r`n"
