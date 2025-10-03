@@ -19,7 +19,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20250910.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
+$inpLog = "P1 meter w solar - 202507*.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -42,7 +42,7 @@ $nTelegrams = 0
 $nFalseTelegram = 0
 
 $timePat = "0-0:1\.0\.0\((\d{12}[SW])\).*"
-$SkipFirstLine_Pattern = "\r\n\r\n0-0:1\.0\.0\([\s\S]*$" # This is the regex that matches the segment of the telegram 
+$SkipFirstLine_Pattern = "\r\n\r\n0-0:1\.0\.0\([\s\S]*$"    # This is the regex that matches the segment of the telegram that comes after the first line
     # starting from the end of the first line ending at the end of the telegram.
     # This will be used to test if a checksum-failed telegram actually has healthy beginning except for the first byte. 
     # The first byte is the most prone to transmission errors. It fortunately is easy to guess (it is always a slash /)
@@ -89,14 +89,13 @@ class DSMRTelegramRecordType {
 #"@ 
 
 Function WriteErrorRatePrediction() {
-        $prediction = "Rounded error rate would be "
+        $prediction = " Rounded error rate would be "
         if ( $rateFalse -gt 0 ) {
             $prediction +=
             "$($rateFalse - 0.01) % " + 
             "if no error occured in the next " + 
             "$( [math]::Round(( ($nFalseTelegram / ($rateFalse - 0.005) * 100 ) - $nTelegrams) / 360, 1) ) " + 
-            "hours " +
-            "or "
+            "hours or "
             }
         $prediction += "$( [math]::Round( ($nFalseTelegram + 1 ) / ($nTelegrams + 1 ) * 100, 2 )) % " +
         "if another error occured immediately." 
@@ -394,56 +393,73 @@ switch -regex   ($_) {
  #           }     
  
 
-            #      look for the service provider message, then remove all chars before the OBIS code after the previous ')'&CRLF. These characters are often read erroneously due to line noise. 
+            # Look for the service provider message, then remove all chars before the OBIS code after the previous ')'&CRLF. 
+            # These characters are often read erroneously due to line noise. 
 
             $oldtelegram = $telegram
             $telegram = $telegram -replace "\)\r\n(.*?)0-0:96\.13\.0\(", ")`r`n0-0:96.13.0("        # (.*?) represents the chars that must not be there unless line noise occurred
 
             if ($telegram.Length -ne $oldtelegram.Length) {     # better to check the length than the content of strings. Two different strings may test as equal if the difference is only some nonprinting chars
-                Write-Output ("Removed characters before the service provider message. Len telegram: $($oldtelegram.Length); after fix: $($telegram.Length).  " +
-                            "Before fix:  $($oldtelegram.substring(1280,70))")
-                $errorlog += $timestamp + ", Removed characters before the service provider message:   " + $oldtelegram.substring(1280,80) + 
-                        "   1302nd char code: " + ([int][char]$oldtelegram.Substring(1302,1)) + "  Len telegram: " + ($oldtelegram.Length) + "`r`n"
+                $wherr = " Removed characters before the service provider message. Len telegram: $($oldtelegram.Length); after fix: $($telegram.Length).  "
+                $errorlog += $timestamp + ", Removed characters before the service provider message:   "
+                if ($oldtelegram.Length -ge 1359) {
+                    $wherr += "Before fix:  $($oldtelegram.substring(1278,50) -replace '\r\n', '<CRLF>')" 
+                    $errorlog += $oldtelegram.substring(1278,80) + "   1302nd char code was: " + ([int][char]$oldtelegram.Substring(1302,1)) + "  Len telegram: " + ($oldtelegram.Length)
+                } 
+                Write-Output ($wherr)
+                $errorlog += "`r`n"
             }
 
-            # Test if the first line of the noisy telegram includes a valid first line if the leading garbled bytes are disregarded. If so, it is likely that the line error only affects the first byte of the dispatched telegram and the leading zero bytes. 
+            # Test if the first char of the service provider message OBIS code is changed from 0 to space. 
+            # It is a common error, probably due to a silence before this character.
+
+            elseif (  $telegram -match "\)\r\n -0:96\.13\.0\("  )  {
+                $telegram = $telegram -replace "\)\r\n -0:96\.13\.0\(", ")`r`n0-0:96.13.0("
+                Write-Output (" Changed the first char of the service provider message OBIS code back to '0' from space (x20)")
+                $errorlog += $timestamp + ", Fixed the first char of the service provider message OBIS code 0-0:96.13.0: changed back to '0' from space (x20)" + "  Len telegram: " + ($telegram.Length) + "`r`n"
+            }
+
+            # Does the first line of the noisy telegram include a valid first line if the leading garbled bytes are disregarded? 
+            # If so, it is likely that the line noise only affects the first byte of the dispatched telegram and the leading zero bytes. 
             # If a valid first line is found in a corrupted telegram then we assume it marks the beginning of the correct telegram, chop off everything before it, and ascertain validity with an extra checksum calculation. 
 
             try {
             if  ( ($telegram -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern) -and ( ( CheckSumFromTG( "/" + $Matches[0])) -eq $senderChksInt )  )  {  # it should ensure that if the comparison throws an error execution continues in the right script block.
-                                                    #               Function call on the left of -eq must in parenthesis if type is uint16. Otherwise precedence or type casting is messed up
+                                                    #               Function call on the left of -eq must be in parenthesis if type is uint16. Otherwise precedence of type casting is messed up.
                                     
                                                     
             # Success, proceed to data extraction to TelegramRec after fixing the first byte of $telegram
                 $nFixedCks++
                 $errorlog += $timestamp
                 $errorlog += ", Tested for garbled characters in the first line $($telegram.substring(0,12)) and removed them if found. Telegram is now valid.  $nFixedCks telegrams fixed."
-                # $errorlog +=       # compare to [convert]::ToString(([int][char]"/"),2)
-                if (-not $telegram.contains(([char]14 + "AU"))) { 
-                    $errorlog += (" Unusual error pattern: Leading '/' was not modified to char(14) in transit.  " +  
-                        (" First three chars: " + [int][char]($telegram.substring(0,1)) + " (" + [convert]::ToString(([int][char]($telegram.substring(0,1)) ),2) + ")   " + 
-                        [int][char]($telegram.substring(1,1)) + " (" + [convert]::ToString(([int][char]($telegram.substring(1,1)) ),2) + ")  " + 
-                        [int][char]($telegram.substring(2,1))  +"`r`n" )        )        # + $telegram.Substring(0, [math]::Min( $telegram.Length , 30)  ) +"`r`n" 
-                    Write-Host "Unusual pattern preceding the telegram; fixed. First char: ", ([convert]::ToString(([int][char]($telegram.substring(0,1)) ),2))
+                $wherr=""
+
+                if (-not $telegram.contains([char]14 + "AU")  -and $telegram.Length -ge 3) { 
+                    $errorlog += (
+                        "  First 3 chars: " + ($telegram.substring(0,3)) + "  (" +  
+                        [convert]::ToString(([int][char]($telegram.substring(0,1)) ),2) + ", " + 
+                        [convert]::ToString(([int][char]($telegram.substring(1,1)) ),2) + ", " + 
+                        [convert]::ToString(([int][char]($telegram.substring(2,1)) ),2) + ") Unusual error pattern: Leading '/' (101111) was not modified to 14 (1110) in transit.`r`n"    )        # + $telegram.Substring(0, [math]::Min( $telegram.Length , 30)  ) +"`r`n" 
+                    $wherr =  "Unusual pattern. First char was: '$($telegram.substring(0,1))' ($([convert]::ToString(([int][char]($telegram.substring(0,1)) ),2)))"
                     }
                 else {
                     $errorlog += "`r`n"
                 }
 
-                write-host "Telegram fixed at $timestamp. Corrected $nFixedCks"
+                write-host "Telegram fixed at $timestamp. Corrected $nFixedCks.  $wherr"
                 $telegram = "/" + $Matches[0]
 
                 }
 
-            elseif (        # Test if the telegram is fixed by replacing the service provider message with the message in the previous correct telegram (all 255's currently).
+            elseif (        # Test if the telegram is fixed by replacing the service provider message with the message in the latest correct telegram (all 255's currently).
                     $prevProviderMessage -ne "" -and 
                     $telegram -match "([\s\S]*?\r?\n0-0:96\.13\.0\()(.*?)(\)\r?\n[\s\S]*|\)$)" -and         # This handles line breaks. Code should start at the beginning of the line.
                     $matches[2]  -ne  $prevProviderMessage -and
-                    ((CheckSumFromTG($matches[1] +  $prevProviderMessage + $matches[3])) -eq $senderChksInt)     # Function call on the left of -eq must be in parenthesis.  # Error in CheckSumFromTG is unlikely as all 3 parts have gone through it earlier
+                    ((CheckSumFromTG($matches[1] +  $prevProviderMessage + $matches[3])) -eq $senderChksInt)     # Function call on the left of -eq must be in parenthesis.
                     ) {
                 # Write-Host "Checksums comparison result (must be True, not a number): " ((CheckSumFromTG($matches[1] +  $prevProviderMessage + $matches[3])) -eq $senderChksInt)
                 
-                $telegram = $matches[1] +  $prevProviderMessage + $matches[3]       #   replace provider message with the old
+                $telegram = $matches[1] +  $prevProviderMessage + $matches[3]       #   replace provider message with the last known good
 
                 if ($prevProviderMessage -match "^[\xFF]*$") {  # for display, shorten the long service provider message  
                     $prevProviderMessage = "string of xFFs"     # prevProviderMessage will be taken from $telegram so we do not need to preserve it here
@@ -451,7 +467,7 @@ switch -regex   ($_) {
                                                 
                 $nFixedCks++
 
-                Write-Output ($timestamp + " Replaced the provider message with:   " + $prevProviderMessage + "    Corrected $nFixedCks" )
+                Write-Output ($timestamp + " Replaced the provider message with:  $prevProviderMessage   Corrected $nFixedCks" )
                 $errorlog += $timestamp + ", Replaced the service provider message with the previous telegram's:   " + $prevProviderMessage + "  $nFixedCks telegrams fixed.`r`n"
 
                 }
@@ -459,7 +475,8 @@ switch -regex   ($_) {
 
                 # Error correction implemented: 
                 #   (done) Replace in the custom service provider message after '0-0:96.13.0(' all chars with xFF and add extra xFF if shorter due to error that created UTF8 prefix character
-                #   (done) Check if chars exist before the service provider message after the previous ')' and if so remove them by matching obis code pattern '0-0:96.13.0' 
+                #   (done) Check if chars exist before the service provider message after the previous ')' and if so remove them by matching obis code pattern '0-0:96.13.0'
+                #   (done) check if first char of service provider message OBIS code 0-0:96.13.0 is changed to " " and change back to '0'
                 #   (done) apply correction of first line to telegrams that suffer byte conversion error in the pre-telegram garbage
                 # then validate checksum again
 
@@ -480,17 +497,18 @@ switch -regex   ($_) {
                 }
             $errorlog += $timestamp + ", " + $CalcChecksum
 
-            Write-Output "Checksum error at $timestamp, rate of error: $rateFalse %  or $nFalseTelegram"            
-
             $pattern = '[\x00-\x09\x0B-\x0C\x0E-\x1F\x80-\xFE]'   # matches non-ASCII characters except xFF, CR and LF. These are not expected in a DSMR telegram. (except perhaps the service provider message) 
             $NoisyChars = $telegram | Select-String -Pattern $pattern -AllMatches | ForEach-Object { $_.Matches }   # select-string operates on all $telegram at once, not per line.
 
             foreach ($NChar in $NoisyChars) {
-                Write-Host " Non-ASCII character '$($NChar.Value)' at position $($NChar.Index)" 
+                # Write-Host " Non-ASCII character '$($NChar.Value)' at position $($NChar.Index)" 
                 $errorlog += ", " + $NChar.Index + ": " +  [int]($NChar.Value[0])
                 }
 
-                WriteErrorRatePrediction
+            Write-Output "Checksum error at $timestamp, rate of error: $rateFalse %  or $nFalseTelegram.  $($NoisyChars.length) chars are non-ascii.  Incorrect OBIS codes with space as first char: $(($telegram -split " -0:").Count -1 )"            
+
+
+            WriteErrorRatePrediction
 
             if ( $NoisyChars ) {
                 if ($NChar.index -lt ($telegram.Length-6) ) {
@@ -501,10 +519,13 @@ switch -regex   ($_) {
                 $errorlog+= ", no invalid char but telegram failed for another reason.  "
                 }
 
-            $errorlog += " " + $rateFalse + " % error rate or " + $nFalseTelegram + " telegrams.`r`n"
+            $errorlog += " $rateFalse % error rate or " + $nFalseTelegram + " telegrams.   Count of OBIS codes with space as first char (likely noise):  $(($telegram -split " -0:").Count-1)."
+            if ($telegram.Length -ge 1303) {
+                $errorlog += "  1302nd char code is: " + ([int][char]$telegram.Substring(1302,1)) + " (should be: 48)"
+                }
+            $errorlog += "`r`n"
 
             # $ValidityStats +=  "False,"  +   $NoisyChars.Length + "`r`n"  # add the number of chars found invalid. Lower estimate for errors.
-
 
             #  Remove leftovers from this telegram that would contaminate the next. We discard fragments, although it might be possible to fix the error by examining remaining lines. For future improvement.
 
@@ -762,7 +783,7 @@ else {
     $PSenc = "UTF8"
 }
 
-$outPath = ( $inpLog -replace '\*', '' ) + ".Test.NoPreSweep.PS"+ $PSVersionTable.PSVersion.Major + $PSVersionTable.PSVersion.Minor
+$outPath = ( $inpLog -replace '\*', '' ) + ".PS"+ $PSVersionTable.PSVersion.Major + "."
 # Out-File -FilePath ($outPath + "Validity.csv")  -InputObject $ValidityStats -Encoding $PSenc    # this output file holds a record for each telegram whether correct or not. 
     # In Windows Powershell 5.1, Out-File creates UTF-16LE. PowerShell defaults to utf8NoBOM for all output.
     # For erroneous (not corrected) telegrams it provides the number of unexpected chars. 
