@@ -19,7 +19,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 202507*.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
+$inpLog = "P1 meter w solar - 20251001.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
 
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -505,8 +505,13 @@ switch -regex   ($_) {
                 $errorlog += ", " + $NChar.Index + ": " +  [int]($NChar.Value[0])
                 }
 
-            Write-Output "Checksum error at $timestamp, rate of error: $rateFalse %  or $nFalseTelegram.  $($NoisyChars.length) chars are non-ascii.  Incorrect OBIS codes with space as first char: $(($telegram -split " -0:").Count -1 )"            
+            $wherr =  ($telegram -split " -0:").Count -1        # check if a typical line error occurred: first char of a line is changed to x20 ?
+            $wherr = if ($wherr -gt 0) {" $wherr remaining invalid OBIS codes with space replacing the first char."} else {""} 
 
+            Write-Output (
+                "Checksum error at $timestamp, rate of error: $rateFalse %  or $nFalseTelegram.  $($NoisyChars.length) chars are non-ascii. " + 
+                $wherr
+                )
 
             WriteErrorRatePrediction
 
@@ -519,7 +524,7 @@ switch -regex   ($_) {
                 $errorlog+= ", no invalid char but telegram failed for another reason.  "
                 }
 
-            $errorlog += " $rateFalse % error rate or " + $nFalseTelegram + " telegrams.   Count of OBIS codes with space as first char (likely noise):  $(($telegram -split " -0:").Count-1)."
+            $errorlog += " $rateFalse % error rate or " + $nFalseTelegram + " telegrams.    $(($telegram -split " -0:").Count-1) remaining invalid OBIS codes with space (x20) replacing the first char (likely noise)."
             if ($telegram.Length -ge 1303) {
                 $errorlog += "  1302nd char code is: " + ([int][char]$telegram.Substring(1302,1)) + " (should be: 48)"
                 }
