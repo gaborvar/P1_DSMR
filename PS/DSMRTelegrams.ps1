@@ -19,8 +19,8 @@
 
 
 
-$inpLog = "P1 meter w solar - 20251001.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
-
+$inpLog = "P1 meter w solar - 20251211.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
+###########################################
 
 $nFixedCks = 0       # Count of corrected checksum errors
 # $ValidityStats = ""  # will store a list of every telegram timestamp and a boolean to state if the telegram is valid. If False, the number of invalid chars is given (i.e. ASCII CRLF or xFF). If True, the added integer provides the number of fixed records since the beginning.
@@ -67,7 +67,6 @@ $kWhOutPat = '1-0:2.8.0\((\d+\.\d+)\*kWh\)'         # ... energy export to grid
 $global:errorlog ="Timestamp, ChecksumCalc, Errordescription (Position: NoisyChar...)`r`n" 
 
 
-# Add-type @"     # removed dependency on .net type definition and replaced with class 
 class DSMRTelegramRecordType {
     [string]$timeString
     [double]$kWhIn
@@ -86,7 +85,6 @@ class DSMRTelegramRecordType {
     [string]$AmpStress
     [string]$kWStress
 }
-#"@ 
 
 Function WriteErrorRatePrediction() {
         $prediction = " Rounded error rate would be "
@@ -589,7 +587,7 @@ switch -regex   ($_) {
 
     # create a single record, then fill it with copied and calculated data from the telegram
 
-            $telegramRec = [DSMRTelegramRecordType]::new()     # @{
+            $telegramRec = [DSMRTelegramRecordType]::new()
                 $telegramRec.kWhIn  = [double]::NaN
                 $telegramRec.kWhOut = [double]::NaN
                 $telegramRec.Voltage3 = [float]::NaN
@@ -604,7 +602,6 @@ switch -regex   ($_) {
                 $telegramRec.TotalAmp = [float]::NaN
                 $telegramRec.VoltStress = ""
                 $telegramRec.AmpStress = ""
-            #  }
 
 
 
@@ -631,27 +628,26 @@ switch -regex   ($_) {
                     }
 
                 $Amp3Pat {   $TelegramRec.Amp3 = [int]$Matches[1] # convert the matched string to an integer
-                    if ($TelegramRec.Amp3 -gt 16) { $telegramrec.AmpStress += "3" }
+                    if ($TelegramRec.Amp3 -gt 18) { $telegramrec.AmpStress += "3" }
                     }
 
                 $Amp5Pat {   $TelegramRec.Amp5 = [int]$Matches[1] # convert the matched string to an integer
-                    if ($TelegramRec.Amp5 -gt 16) { $telegramrec.AmpStress += "5" }
+                    if ($TelegramRec.Amp5 -gt 18) { $telegramrec.AmpStress += "5" }
                     }
 
                 $Amp7Pat {   $TelegramRec.Amp7 = [int]$Matches[1] # convert the matched string to an integer
-                    if ($TelegramRec.Amp7 -gt 16) { $telegramrec.AmpStress += "7" }
+                    if ($TelegramRec.Amp7 -gt 18) { $telegramrec.AmpStress += "7" }
                     }
 
          
                 $kWInPat { $TelegramRec.kWIn = [float]$Matches[1] # convert the matched string to a float
-                    if ($TelegramRec.kWIn -gt 4400) { $telegramrec.kWStress = $true }
+                    if ($TelegramRec.kWIn -gt 11) { $telegramrec.kWStress = $true }
                     }
                 $kWOutPat { $TelegramRec.kWOut = [float]$Matches[1] # convert the matched string to a float
-                    if ($TelegramRec.kWOut -gt 4400) { $telegramrec.kWStress = $true }
+                    if ($TelegramRec.kWOut -gt 11) { $telegramrec.kWStress = $true }
                     }
     
                 } 
-
 
 
 
@@ -661,16 +657,13 @@ switch -regex   ($_) {
 
             $TelegramTime = get-date -year ("20"+$timestamp.substring(0,2)) -month $timestamp.substring(2,2) -day $timestamp.substring(4,2) -hour $timestamp.Substring(6,2) -minute $timestamp.Substring(8,2)  -second $timestamp.Substring(10,2)  
 
-               if ($timestamp[-1] -eq "S" ) {    # Standard (winter) hour is 1 lower in summer than the timestamp
+            if ($timestamp[-1] -eq "S" ) {    # Standard (winter) hour is 1 lower in summer than the timestamp
               
                 $TelegramTime -= new-timespan -Hours 1
-                
-                  }
+                }
 
-       
 
             if ($TelegramPrevkWhInTime) {
-
 
                     # we assume that time between the last two records were 10 seconds if the dates are less than 15 seconds apart.
                     # for longer time periods we do not calculate power consumption from the two energy readings
@@ -679,14 +672,14 @@ switch -regex   ($_) {
 
                     $TelegramRec.kWInfromConsumption = ( $TelegramRec.kWhIn - $TelegramPrevkWhIn ) * 360    # Assuming that each telegram is 10 seconds apart, calculating power from energy by deviding energy with time (1/360 hours)
                     }
-                        else {
-                        $TelegramRec.kWInfromConsumption = [float]::NaN
-                        }
-
-                }  
                 else {
                     $TelegramRec.kWInfromConsumption = [float]::NaN
                     }
+
+                }  
+            else {
+                $TelegramRec.kWInfromConsumption = [float]::NaN
+                }
 
 
             $TelegramPrevkWhInTime = $TelegramTime
@@ -702,7 +695,7 @@ switch -regex   ($_) {
 
             elseif ( $telegramRec.kWIn -eq 0) {     # No consumption from grid
                 $telegramRec.TotalAmp = $Telegramrec.kWOut / ($telegramRec.Voltage3 + $TelegramRec.Voltage5 + $TelegramRec.Voltage7) * 3 * 1000  # calculate P/U, using the average of U per phase. Reactive power not accounted for.
-                }                #  Positive TotalAmp means feeding to grid.
+                }                #  positive TotalAmp means feeding to grid.
 
                 #        precision could be increased by factoring in the reactive power. Subject to future work.
 
