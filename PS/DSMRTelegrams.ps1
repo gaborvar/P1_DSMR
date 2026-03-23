@@ -19,7 +19,8 @@
 
 
 
-$inpLog = "P1 meter w solar - 20251211.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
+
+$inpLog = "P1 meter w solar - 202411*.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
 ###########################################
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -115,7 +116,14 @@ Function CheckSumFromTG  {
             } else {
                 $start = [Math]::Max($TB - 20, 0)
                 $length = [Math]::Min(30, $tlgr.Length - $start)
-                write-host ("Double byte code found while calculating checksum in $timestamp. Position: $TB, character: $([int]$tlgr[$TB]), $($tlgr.Substring($start, $length))" )
+                if ($tlgr.Substring($start, 1) -eq "\n" ) {           # in case the quoted surrounding of the error begins with an orphaned LF
+                    $start ++
+                    $length = $length - 1
+                }
+                if ($tlgr.Substring($start + $length - 1, 1) -eq "\r" ) {   # in case the quoted surrounding of the error ends with an orphaned CR
+                    $length = $length - 1
+                }
+                write-host ("Double byte code found while calculating checksum in $timestamp. Position: $TB, character: $([int]$tlgr[$TB]), $($tlgr.Substring($start, $length)  -replace '\r\n', '<CRLF>')" )
                 if ([int]$tlgr[$TB] -eq 729) {  #  PWSH 7.x get-content -Encoding ansi translates xFF to 729 - in case we cannot control encoding. 
                     Write-Host ("Code 729 is found while calculating checksum. It may indicate that code page 1250 was assumed by get-content while ingesting. Should be 1252 or no translation.")
                 }
@@ -164,16 +172,12 @@ Function RecordAbortiveError {      # Updates many global vars so specifying 'gl
     return
 }
 
-Function RecordCorrectedError {     # Updates global vars so '$global:' prefix for CHANGED vars is important.
+Function RecordCorrectedError {     # Not used currently. Updates global vars so '$global:' prefix for CHANGED vars is important.
     param (
         [string]$ErrorMessage,
         [int]$ErrorPos = 0 # default value: 0 means "not provided"
     )
-    $global:nFixedCks++
 
-    $global:errorlog += $timestamp
-    $global:errorlog += ", " + $ErrorMessage + " $nFixedCks telegrams fixed.`r`n"
-    Write-Host $ErrorMessage, " Corrected $nFixedCks"
 
     }
 
@@ -270,6 +274,7 @@ switch -regex   ($_) {
 
 
         $nTelegrams ++
+        $AccumulatedErrors = $false     # If more than one error occurs in the same telegram then this signals earlier errors for completing the processing later 
         # $ValidityStats += $timestamp + "," 
 
         if ($false) {       # We don't use this preprocessing code block currently 
@@ -277,41 +282,41 @@ switch -regex   ($_) {
                             # Slows down all processing for little gain. 
                             # We can detect erroneous mappings while computing CRC and mitigate them by setting the least intrusive PS encoding (1252 in pwsh and Default in 5.1)
 
-        # Check if error would cause checksum calculation to fail, e.g. unnecessary mapping by Powershell ingest to >255 unicode
-        # Step 1: Convert string to char array
-        $charArray = $telegram.ToCharArray()
+            # Check if error would cause checksum calculation to fail, e.g. unnecessary mapping by Powershell ingest to >255 unicode
+            # Step 1: Convert string to char array
+            $charArray = $telegram.ToCharArray()
 
-        # Step 2: Replace and validate
-        for ($i = 0; $i -lt $charArray.Length; $i++) {
-            $code = [int]$charArray[$i]
+            # Step 2: Replace and validate
+            for ($i = 0; $i -lt $charArray.Length; $i++) {
+                $code = [int]$charArray[$i]
 
-            if ($code -eq 729) {        # PWSH 7.x get-content -Encoding ansi replaces xFF with 729
-                # Replace bad Unicode (˙) with 255
-                $charArray[$i] = [char]255
-                Write-Output "729 spotted and replaced in $timestamp"
+                if ($code -eq 729) {        # PWSH 7.x get-content -Encoding ansi replaces xFF with 729
+                    # Replace bad Unicode (˙) with 255
+                    $charArray[$i] = [char]255
+                    Write-Output "729 spotted and replaced in $timestamp"
+                }
+                elseif ($code -eq 402) {    # Powershell 5.1 replaces x83 with 402. Probably it assumes ansi 1252
+                    $charArray[$i] = [char]131
+                }
+                elseif ( $code -gt 255 ) {
+                    write-output "i: $i,  code: $code"
+                    RecordAbortiveError "Invalid character code ingested, not trying to fix." -ErrorPos $i      # Updates global variables and writes error message
+                    break
+                }
             }
-            elseif ($code -eq 402) {    # Powershell 5.1 replaces x83 with 402. Probably it assumes ansi 1252
-                $charArray[$i] = [char]131
-            }
-            elseif ( $code -gt 255 ) {
-                write-output "i: $i,  code: $code"
-                RecordAbortiveError "Invalid character code ingested, not trying to fix." -ErrorPos $i      # Updates global variables and writes error message
+            if ($code -gt 255) {
                 break
             }
+
+            # Step 3: Rebuild the cleaned string
+            $sb = [System.Text.StringBuilder]::new($charArray.Length)
+            $null = $sb.Append($charArray)
+
+
+            $telegram = $sb.ToString() + "!" 
+        } else {
+            $telegram += "!"
         }
-        if ($code -gt 255) {
-            break
-        }
-
-        # Step 3: Rebuild the cleaned string
-        $sb = [System.Text.StringBuilder]::new($charArray.Length)
-        $null = $sb.Append($charArray)
-
-
-        $telegram = $sb.ToString() + "!" 
-    } else {
-        $telegram += "!"
-    }
 
 
         try {
@@ -335,13 +340,20 @@ switch -regex   ($_) {
                             #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
                 }
 
-            RecordCorrectedError "Byte conversion error found pre-telegram:  $($telegram.substring( 0, [Math]::Min(20, $telegram.Length ))) Removing leading garbage. "     # Changes global variables
+            $NonByteErrorMessage = "$timestamp, Byte conversion error found pre-telegram:  $($telegram.substring( 0, [Math]::Min(20, $telegram.Length ))) Removing leading garbage. "
+
+            # $global:nFixedCks++   # must not yet advance counter as the checksum is not yet revalidated after fix
+
+            $errorlog += $NonByteErrorMessage +"`r`n"
+            Write-Host $NonByteErrorMessage, " Processing of the telegram continues."
+            $AccumulatedErrors = $true     # signals that this error was fixed in the telegram but not yet validated with checksum recalc
+
             $telegram = "/" + $Matches[0]       # RecordCorrectedError routine should preserve $Matches
 
             # write-host "Byte conversion error pre-telegram. Removed. Proceeding. Telegram boundaries are fixed at $timestamp. Corrected $nFixedCks"
 
             try {
-            [uint16]$CalcChecksum =  CheckSumFromTG $telegram      # In case a second character also throws an error 
+                [uint16]$CalcChecksum =  CheckSumFromTG $telegram      # In case a second character also throws an error 
             }
             catch {
                 if ( -not ($_ -match '^Not_a_Byte_ERROR:(\d+)$') ) {
@@ -359,7 +371,7 @@ switch -regex   ($_) {
             $senderChksInt = [UInt16]::Parse($SenderChks, [System.Globalization.NumberStyles]::HexNumber)
         } 
         catch {
-            $errorlog += $timestamp + ", Unreadable CRC in telegram.`r`n"
+            $errorlog += $timestamp + ", Unreadable CRC in telegram.`r`n"   #  todo:  Change to calling RecordAbortiveError
             # $ValidityStats += "False,`r`n"
 
             $nFalseTelegram ++
@@ -382,7 +394,16 @@ switch -regex   ($_) {
 
         # [uint16]$ChksumTGCorrected = 0
         
-        if ($senderChksInt -ne $CalcChecksum ) {    # if checksums do not match handle the error here by trying to substitute suspect bytes. Otherwise skip forward to process telegram into a record.
+        if ($senderChksInt -eq $CalcChecksum ) {
+            if ($AccumulatedErrors) {       # in case byte conversion error occurred and was successfully fixed, complete here the postponed error handling
+                $nFixedCks ++
+                $errorlog += "$timestamp, Corrected.  $nFixedCks telegrams fixed.`r`n"
+                Write-Host " Telegram was successfully fixed by removing pre-telegram noise. Corrected $nFixedCks"
+                
+            }
+        }       # Proceed to the telegram record processing, skipping all error management below 
+        
+        else {    # if checksums do not match handle the error here by trying to substitute suspect bytes. Otherwise skip forward to process telegram into a record.
 
  #               if ($telegram.Length -ne 2342) {
  #                   $tempMatch= ($telegram -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern)
@@ -401,11 +422,14 @@ switch -regex   ($_) {
                 $wherr = " Removed characters before the service provider message. Len telegram: $($oldtelegram.Length); after fix: $($telegram.Length).  "
                 $errorlog += $timestamp + ", Removed characters before the service provider message:   "
                 if ($oldtelegram.Length -ge 1359) {
-                    $wherr += "Before fix:  $($oldtelegram.substring(1278,50) -replace '\r\n', '<CRLF>')" 
-                    $errorlog += $oldtelegram.substring(1278,80) + "   1302nd char code was: " + ([int][char]$oldtelegram.Substring(1302,1)) + "  Len telegram: " + ($oldtelegram.Length)
-                } 
+                    $wherr += "Before fix:  $( ( ($oldtelegram.substring(1278,50) -replace '\r\n', '<CRLF>') -replace '\n', '<LF>') -replace '\r', '<CR>')"
+                    $errorlog += $oldtelegram.substring(1278,80) + 
+                        "   1302nd char code was: " + ([int][char]$oldtelegram.Substring(1302,1)) + 
+                        "  Len telegram: " + ($oldtelegram.Length)
+                }
                 Write-Output ($wherr)
                 $errorlog += "`r`n"
+                $AccumulatedErrors = $true  # signals that at least one error was fixed in the telegram but not yet validated with checksum recalc. For future refinement of error handling code
             }
 
             # Test if the first char of the service provider message OBIS code is changed from 0 to space. 
@@ -415,6 +439,7 @@ switch -regex   ($_) {
                 $telegram = $telegram -replace "\)\r\n -0:96\.13\.0\(", ")`r`n0-0:96.13.0("
                 Write-Output (" Changed the first char of the service provider message OBIS code back to '0' from space (x20)")
                 $errorlog += $timestamp + ", Fixed the first char of the service provider message OBIS code 0-0:96.13.0: changed back to '0' from space (x20)" + "  Len telegram: " + ($telegram.Length) + "`r`n"
+                $AccumulatedErrors = $true  # signals that at least one error was fixed in the telegram but not yet validated with checksum recalc. For future refinement of error handling code
             }
 
             # Does the first line of the noisy telegram include a valid first line if the leading garbled bytes are disregarded? 
@@ -423,11 +448,12 @@ switch -regex   ($_) {
 
             try {
             if  ( ($telegram -cmatch $EarlierFirstLine.Substring(1) + $SkipFirstLine_Pattern) -and ( ( CheckSumFromTG( "/" + $Matches[0])) -eq $senderChksInt )  )  {  # it should ensure that if the comparison throws an error execution continues in the right script block.
-                                                    #               Function call on the left of -eq must be in parenthesis if type is uint16. Otherwise precedence of type casting is messed up.
-                                    
-                                                    
+                                                    #       Function call on the left of -eq must be in parenthesis if type is uint16. Otherwise precedence of type casting is messed up.
+
+
             # Success, proceed to data extraction to TelegramRec after fixing the first byte of $telegram
                 $nFixedCks++
+                $AccumulatedErrors = $false     # signals that checksum recalc was a match and counter of fixed telegrams is advanced, in case an error was fixed in the telegram earlier. For future refinement of error handling code
                 $errorlog += $timestamp
                 $errorlog += ", Tested for garbled characters in the first line $($telegram.substring(0,12)) and removed them if found. Telegram is now valid.  $nFixedCks telegrams fixed."
                 $wherr=""
@@ -443,6 +469,7 @@ switch -regex   ($_) {
                 else {
                     $errorlog += "`r`n"
                 }
+
 
                 write-host "Telegram fixed at $timestamp. Corrected $nFixedCks.  $wherr"
                 $telegram = "/" + $Matches[0]
@@ -464,6 +491,7 @@ switch -regex   ($_) {
                 }
                                                 
                 $nFixedCks++
+                $AccumulatedErrors = $false     # signals that checksum recalc was a match and counter of fixed telegrams is advanced, in case an error was fixed in the telegram earlier. For future refinement of error handling code
 
                 Write-Output ($timestamp + " Replaced the provider message with:  $prevProviderMessage   Corrected $nFixedCks" )
                 $errorlog += $timestamp + ", Replaced the service provider message with the previous telegram's:   " + $prevProviderMessage + "  $nFixedCks telegrams fixed.`r`n"
@@ -485,7 +513,7 @@ switch -regex   ($_) {
         
             # Give up. This telegram is unhealable. We just record the error parameters and exit telegram processing without recording the values in TelegramRec
 
-            # Change this to call RecordAbortiveError -ErrorMessage "..." -ErrorPos 
+            # todo: Change this to call RecordAbortiveError -ErrorMessage "..." -ErrorPos 
             $nFalseTelegram ++
             if ($nTelegrams -ne 0 ) {
                 $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
@@ -581,7 +609,7 @@ switch -regex   ($_) {
                     $errorlog += "'"+ $FirstLine +"' will be used to detect errors.`r`n"
                     }
                 else {
-                    $errorlog += "EarlierFirstLine is not updated. `r`n"
+                    $errorlog += "EarlierFirstLine is not updated because it appeared invalid. `r`n"
                     }
                 }
 
