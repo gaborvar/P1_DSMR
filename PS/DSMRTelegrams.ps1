@@ -20,7 +20,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 202411*.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
+$inpLog = "P1 meter w solar - 20260401*.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
 ###########################################
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -166,7 +166,7 @@ Function RecordAbortiveError {      # Updates many global vars so specifying 'gl
     Write-Output "$timestamp $ErrorMessage position $ErrorPos, around '$($telegram.substring($start, $length))' rate of error: $rateFalse %  or $nFalseTelegram"
     WriteErrorRatePrediction
 
-    $global:timestamp = "-No timestamp-(prev:" + $timestamp + ")"   # invalidate the timestamp until a new one is found
+    $global:timestamp = "-No timestamp-(prev:" + $timestamp + ")"   # invalidate the timestamp until a new one is found - but preserve it in case the the next telegram does not contain a legible timestamp
 
 
     return
@@ -371,18 +371,20 @@ switch -regex   ($_) {
             $senderChksInt = [UInt16]::Parse($SenderChks, [System.Globalization.NumberStyles]::HexNumber)
         } 
         catch {
-            $errorlog += $timestamp + ", Unreadable CRC in telegram.`r`n"   #  todo:  Change to calling RecordAbortiveError
-            # $ValidityStats += "False,`r`n"
+            $telegram += $SenderChks
+            RecordAbortiveError "Unreadable CRC in telegram. " -ErrorPos [Math]::Max($telegram.Length - 4, 0)     # Updates global variables and writes error message
+            ### $errorlog += $timestamp + ", Unreadable CRC in telegram.`r`n"   #  done:  Change to calling RecordAbortiveError
+            ## $ValidityStats += "False,`r`n"
 
-            $nFalseTelegram ++
-            $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
+            ### $nFalseTelegram ++
+            ### $rateFalse = [math]::Round($nFalseTelegram / $nTelegrams *100 , 2)
 
-            Write-Output "Unreadable CRC error at $timestamp, rate of error: $rateFalse %  or $nFalseTelegram"            
+            ### Write-Output "Unreadable CRC error at $timestamp, rate of error: $rateFalse %  or $nFalseTelegram"            
 
-            $timestamp = "-No timestamp-"   # invalidate the timestamp until a new one is found
+            ### $timestamp = "-No timestamp-"   # invalidate the timestamp until a new one is found
 
             break   #   We exit the SWITCH block with a BREAK which skips further error detection and correction, 
-                    #   and completes the processing the last line of the telegram.
+                    #   and completes the processing of the last line of the telegram.
                     #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
                     #   todo: if we exit the telegram processing here and do not delete the $telegram, and the next telegram starts with a 
                     #   correctable error in the first line (first "/" lost in transit), then error correction may not work. 
@@ -786,7 +788,7 @@ switch -regex   ($_) {
                 }
 
             $telegram  = ""             #   Remove the telegram. Not strictly necessary as it will be removed when the next telegram starts.
-            $timestamp = "-No timestamp-(prev:" + $timestamp + ")"
+            $timestamp = "-No timestamp-(prev:" + $timestamp + ")"      # invalidates the timestamp but preserves it in case an error might render the timestamp of the upcoming telegram unusable
 
         }       #   End of processing the last line of the telegram (the line with "!" and the checksum)
 
