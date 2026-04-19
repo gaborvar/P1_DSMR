@@ -20,7 +20,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20260401*.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
+$inpLog = "P1 meter w solar - 20260416.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
 ###########################################
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -88,17 +88,23 @@ class DSMRTelegramRecordType {
 }
 
 Function WriteErrorRatePrediction() {
-        $prediction = " Rounded error rate would be "
-        if ( $rateFalse -gt 0 ) {
-            $prediction +=
-            "$($rateFalse - 0.01) % " + 
-            "if no error occured in the next " + 
-            "$( [math]::Round(( ($nFalseTelegram / ($rateFalse - 0.005) * 100 ) - $nTelegrams) / 360, 1) ) " + 
-            "hours or "
-            }
-        $prediction += "$( [math]::Round( ($nFalseTelegram + 1 ) / ($nTelegrams + 1 ) * 100, 2 )) % " +
-        "if another error occured immediately." 
-        Write-Output $prediction 
+    $predictionMsg = " Rounded error rate would be "
+    if ( $rateFalse -gt 0 ) {       # $rateFalse is rounded to hundredths so this is equivalent to >= 0.01
+        $rate_prediction_telegrams = [math]::ceiling( $nFalseTelegram / ($rateFalse - 0.005) * 100 )
+        if ($rate_prediction_telegrams -le $nTelegrams) {       # should never be true
+            $rate_prediction_telegrams = $nTelegrams + 1        # in case nTelegrams is so low that number of telegrams for the prediction point is the same as current number of telegrams 
+            Write-Output "Warning: inconsistent prediction for number of telegrams where rounded error rate steps down to next lower multiple of 0.01%"
+        }
+        $predicted_rate = $nFalseTelegram / $rate_prediction_telegrams  # TODO: use this below to calculate exact prediction time and rate
+        $predictionMsg +=
+        "$($rateFalse - 0.01) % ($([math]::round($predicted_rate*100, 3 ) ) %) " + 
+        "if no error occured in the next " + 
+        "$( [math]::Round(( ($nFalseTelegram / ($rateFalse - 0.005) * 100 ) - $nTelegrams) / 360, 1) ) " + 
+        "hours or "
+        }
+    $predictionMsg += "$( [math]::Round( ($nFalseTelegram + 1 ) / ($nTelegrams + 1 ) * 100, 2 )) % " +
+    "if another error occured immediately." 
+    Write-Output $predictionMsg     #, " Refined prediction point is at $rate_prediction_telegrams (was: $($nFalseTelegram / ($rateFalse - 0.005) * 100 )) number of telegrams"
     }
 
 Function CheckSumFromTG  {
@@ -799,10 +805,10 @@ switch -regex   ($_) {
 
     
     default {$telegram = $telegram + $_ + "`r`n" }
-}
+}   # end of switch 
 
 
-}
+}   # end of get-content loop
 
 if ($PSversiontable.PSVersion.Major -ge 6) {    # Trying to limit size of output files. To be tested with both 5.1 and pwsh 7.x
     $PSenc = "utf8NoBOM"
