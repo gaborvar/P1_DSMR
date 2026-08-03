@@ -16,11 +16,12 @@
 # This is sufficient if error rate is fairly low. For error rates > 10% per telegram (which corresponds less than 0.005% per byte) or larger you probably need more sophisticated error handling.
 
 # Takes a minute to process a daily worth of (24x360) telegrams. Typical performance is 5 msec per record (roughly half an hour per month, on i7-7700 CPU). File operations could be optimised.
+# Length of one telegram was 2342 before the update in the supported OBIS codes in June 2024 which took effect on 21 July 2026 10:42. After the update length is 2515 chars.
 
 
 
 
-$inpLog = "P1 meter w solar - 20260416.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
+$inpLog = "P1 meter w solar - 20260715.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
 ###########################################
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -62,8 +63,21 @@ $Amp7Pat = '1-0:71.7.0\((\d+)\*A\)' # regular expression pattern to match amps
 $kWInPat  = '1-0:1.7.0\((\d+\.\d+)\*kW\)' # regular expression pattern to match the power consumption
 $kWOutPat = '1-0:2.7.0\((\d+\.\d+)\*kW\)' # regular expression pattern to match the power to the grid
 
-$kWhInPat  = '1-0:1.8.0\((\d+\.\d+)\*kWh\)'   # regular exp to match total energy incoming from grid
-$kWhOutPat = '1-0:2.8.0\((\d+\.\d+)\*kWh\)'         # ... energy export to grid
+$kWhInPat  = '1-0:1.8.0\((\d+\.\d+)\*kWh\)'   # regular exp to match total energy from grid 
+$kWhOutPat = '1-0:2.8.0\((\d+\.\d+)\*kWh\)'         # ... energy exported to grid
+
+$kWIn3Pat  = '1-0:21.7.0\((\d+\.\d+)\*kW\)' # regular expression pattern to match the L1 power consumption. Added in 2024 update.
+$kWIn5Pat  = '1-0:41.7.0\((\d+\.\d+)\*kW\)' # regular expression pattern to match the L2 power consumption. Added in 2024 update.
+$kWIn7Pat  = '1-0:61.7.0\((\d+\.\d+)\*kW\)' # regular expression pattern to match the L3 power consumption. Added in 2024 update.
+
+$kWOut3Pat = '1-0:22.7.0\((\d+\.\d+)\*kW\)' # regular expression pattern to match the L1 power to the grid. Added in 2024 update.
+$kWOut5Pat = '1-0:42.7.0\((\d+\.\d+)\*kW\)' # regular expression pattern to match the L2 power to the grid. Added in 2024 update.
+$kWOut7Pat = '1-0:62.7.0\((\d+\.\d+)\*kW\)' # regular expression pattern to match the L3 power to the grid. Added in 2024 update.
+
+$CosPhiPat = '1-0:13.7.0\((\d+\.\d+)\)' # regular expression pattern to match power factor
+$CosPhi3Pat = '1-0:33.7.0\((\d+\.\d+)\)' # regular expression pattern to match L1 power factor
+$CosPhi5Pat = '1-0:53.7.0\((\d+\.\d+)\)' # regular expression pattern to match L2 power factor
+$CosPhi7Pat = '1-0:73.7.0\((\d+\.\d+)\)' # regular expression pattern to match L3 power factor
 
 $global:errorlog ="Timestamp, ChecksumCalc, Errordescription (Position: NoisyChar...)`r`n" 
 
@@ -78,9 +92,27 @@ class DSMRTelegramRecordType {
     [int]$Amp3                  # EON P1 truncates the reading to integer.
     [int]$Amp5                  # EON P1 truncates the reading to integer.
     [int]$Amp7                  # EON P1 truncates the reading to integer.
+
+    [float]$Amp3f                  # Current calculated from power and power factor
+    [float]$Amp5f                  # Current calculated from power and power factor
+    [float]$Amp7f                  # Current calculated from power and power factor
+
     [float]$kWIn
     [float]$kWOut
-    [float]$kWInfromConsumption   # this is a calculated field: power calculated from the cumulative energy reading
+    [float]$kWIn3
+    [float]$kWIn5
+    [float]$kWIn7
+    [float]$kWOut3
+    [float]$kWOut5
+    [float]$kWOut7
+    [float]$CosPhi              # 3 phase power factor
+    # [float]$CosPhiCalc             # calculated field to test cos phi consistency
+
+    [float]$CosPhi3             # L1 power factor
+    [float]$CosPhi5             # L2 power factor
+    [float]$CosPhi7             # L3 power factor
+
+    [float]$kWInfromConsumption # this is a calculated field: power calculated from the cumulative energy reading
     [float]$TotalAmp            # calculated field: total current based on power in/out and voltage on all 3 phases
     [string]$VoltStress
     [string]$AmpStress
@@ -428,12 +460,13 @@ switch -regex   ($_) {
 
             if ($telegram.Length -ne $oldtelegram.Length) {     # better to check the length than the content of strings. Two different strings may test as equal if the difference is only some nonprinting chars
                 $wherr = " Removed characters before the service provider message. Len telegram: $($oldtelegram.Length); after fix: $($telegram.Length).  "
-                $errorlog += $timestamp + ", Removed characters before the service provider message:   "
-                if ($oldtelegram.Length -ge 1359) {
-                    $wherr += "Before fix:  $( ( ($oldtelegram.substring(1278,50) -replace '\r\n', '<CRLF>') -replace '\n', '<LF>') -replace '\r', '<CR>')"
-                    $errorlog += $oldtelegram.substring(1278,80) + 
+                $errorlog += $timestamp + ", Removed characters before the service provider message. Len telegram was: " + ($oldtelegram.Length) + "   "
+                if ($oldtelegram.Length -ge 1486) {
+                    $wherr += "Before fix:  $( ( ($oldtelegram.substring(1292,20) -replace '\r\n', '<CRLF>') -replace '\n', '<LF>') -replace '\r', '<CR>')"
+                    $errorlog += $oldtelegram.substring(1288,20) + "   or   " +
+                        $oldtelegram.substring(1465,20) +
                         "   1302nd char code was: " + ([int][char]$oldtelegram.Substring(1302,1)) + 
-                        "  Len telegram: " + ($oldtelegram.Length)
+                        "   1475th char code was: " + ([int][char]$oldtelegram.Substring(1475,1))
                 }
                 Write-Output ($wherr)
                 $errorlog += "`r`n"
@@ -472,7 +505,7 @@ switch -regex   ($_) {
                         [convert]::ToString(([int][char]($telegram.substring(0,1)) ),2) + ", " + 
                         [convert]::ToString(([int][char]($telegram.substring(1,1)) ),2) + ", " + 
                         [convert]::ToString(([int][char]($telegram.substring(2,1)) ),2) + ") Unusual error pattern: Leading '/' (101111) was not modified to 14 (1110) in transit.`r`n"    )        # + $telegram.Substring(0, [math]::Min( $telegram.Length , 30)  ) +"`r`n" 
-                    $wherr =  "Unusual pattern. First char was: '$($telegram.substring(0,1))' ($([convert]::ToString(([int][char]($telegram.substring(0,1)) ),2)))"
+                    $wherr =  "First char was: '$($telegram.substring(0,1))' ($([convert]::ToString(([int][char]($telegram.substring(0,1)) ),2)))"
                     }
                 else {
                     $errorlog += "`r`n"
@@ -560,7 +593,7 @@ switch -regex   ($_) {
 
             $errorlog += " $rateFalse % error rate or " + $nFalseTelegram + " telegrams.    $(($telegram -split " -0:").Count-1) remaining invalid OBIS codes with space (x20) replacing the first char (likely noise)."
             if ($telegram.Length -ge 1303) {
-                $errorlog += "  1302nd char code is: " + ([int][char]$telegram.Substring(1302,1)) + " (should be: 48)"
+                $errorlog += "  1302nd char code is: " + ([int][char]$telegram.Substring(1302,1))
                 }
             $errorlog += "`r`n"
 
@@ -632,8 +665,26 @@ switch -regex   ($_) {
                 $telegramRec.Amp3 = [int]::MinValue
                 $telegramRec.Amp5 = [int]::MinValue
                 $telegramRec.Amp7 = [int]::MinValue
+
+                $telegramRec.Amp3f = [float]::NaN
+                $telegramRec.Amp5f = [float]::NaN
+                $telegramRec.Amp7f = [float]::NaN
+                
                 $telegramRec.kWIn = [float]::MinValue
                 $telegramRec.kWOut = [float]::MinValue
+
+                $telegramRec.kWIn3 = [float]::NaN
+                $telegramRec.kWIn5 = [float]::NaN
+                $telegramRec.kWIn7 = [float]::NaN
+                $telegramRec.kWOut3 = [float]::NaN
+                $telegramRec.kWOut5 = [float]::NaN
+                $telegramRec.kWOut7 = [float]::NaN
+                $telegramRec.CosPhi = [float]::NaN
+                $telegramRec.CosPhi3 = [float]::NaN
+                $telegramRec.CosPhi5 = [float]::NaN
+                $telegramRec.CosPhi7 = [float]::NaN
+                # $TelegramRec.CosPhiCalc = [float]::NaN
+
                 $telegramRec.kWInfromConsumption = [float]::NaN
                 $telegramRec.TotalAmp = [float]::NaN
                 $telegramRec.VoltStress = ""
@@ -682,7 +733,30 @@ switch -regex   ($_) {
                 $kWOutPat { $TelegramRec.kWOut = [float]$Matches[1] # convert the matched string to a float
                     if ($TelegramRec.kWOut -gt 11) { $telegramrec.kWStress = $true }
                     }
-    
+
+                $kWIn3Pat { $telegramRec.kWIn3 = [float]$Matches[1]     # convert the matched string to a float
+                    }
+                $kWIn5Pat { $telegramRec.kWIn5 = [float]$Matches[1]     # convert the matched string to a float
+                    }
+                $kWIn7Pat { $telegramRec.kWIn7 = [float]$Matches[1]     # convert the matched string to a float
+                    }
+                $kWOut3Pat { $telegramRec.kWOut3 = [float]$Matches[1]   # convert the matched string to a float
+                    }
+                $kWOut5Pat { $telegramRec.kWOut5 = [float]$Matches[1]   # convert the matched string to a float
+                    }
+                $kWOut7Pat { $telegramRec.kWOut7 = [float]$Matches[1]   # convert the matched string to a float
+                    }
+
+                $CosPhiPat { $TelegramRec.CosPhi = [float]$Matches[1]      # convert the matched string to a float
+                    }
+                $CosPhi3Pat { $TelegramRec.CosPhi3 = [float]$Matches[1]    # convert the matched string to a float
+                    }
+                $CosPhi5Pat { $TelegramRec.CosPhi5 = [float]$Matches[1]    # convert the matched string to a float
+                    }
+                $CosPhi7Pat { $TelegramRec.CosPhi7 = [float]$Matches[1]    # convert the matched string to a float
+                    }
+
+                                    
                 } 
 
 
@@ -724,6 +798,17 @@ switch -regex   ($_) {
 
     # Alleviate the low precision of current readings by looking at the power and voltage. 
     # P1 port Amper readings are truncated to integer and do not show the direction of the energy flow per phase. 
+
+            if ($TelegramRec.kWIn3 -ne [float]::NaN ) {
+                $TelegramRec.Amp3f = 1000 * $TelegramRec.kWIn3 / $TelegramRec.CosPhi3 / $telegramRec.Voltage3
+                }
+            if ($TelegramRec.kWIn5 -ne [float]::NaN ) {
+                $TelegramRec.Amp5f = 1000 * $TelegramRec.kWIn5 / $TelegramRec.CosPhi5 / $telegramRec.Voltage5
+                }
+            if ($TelegramRec.kWIn7 -ne [float]::NaN ) {
+                $TelegramRec.Amp7f = 1000 * $TelegramRec.kWIn7 / $TelegramRec.CosPhi7 / $telegramRec.Voltage7 
+            }
+
 
             if ( $telegramRec.kWOut -eq 0)  {       # unfortunately we can calculate useful statistics only if each phase transfers energy in the same direction as the other two. 
                 $telegramRec.TotalAmp =  - $Telegramrec.kWIn / ($telegramRec.Voltage3 + $TelegramRec.Voltage5 + $TelegramRec.Voltage7) * 3 * 1000  # calculate P/U, using the average of U per phase.  Reactive power not accounted for.
@@ -793,7 +878,7 @@ switch -regex   ($_) {
                 # write-host "New provider message recorded: $prevProviderMessage"
                 }
 
-            $telegram  = ""             #   Remove the telegram. Not strictly necessary as it will be removed when the next telegram starts.
+            $telegram  = ""             #   Remove the telegram.
             $timestamp = "-No timestamp-(prev:" + $timestamp + ")"      # invalidates the timestamp but preserves it in case an error might render the timestamp of the upcoming telegram unusable
 
         }       #   End of processing the last line of the telegram (the line with "!" and the checksum)
