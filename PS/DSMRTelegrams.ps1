@@ -1,5 +1,5 @@
-﻿# Reads DSMR P1 telegrams from the serial log file. Relevant fields of the telegrams are written to a CSV (separator is semicolon) file as a table of records. 
-# Prevents invalid data by checking for errors in the telegrams and either fixing them or dropping if a fix would be too complex.
+﻿# Reads DSMR P1 telegrams from the serial port log file. Relevant fields of the telegrams are written to a CSV (separator is semicolon) file as a table of records. 
+# Prevents invalid data by checking for errors in the telegrams and either fixing them or dropping the telegram if the fix would lead to uncertain telegram data.
 # Calculates checksum from each telegram and writes TRUE for a match or FALSE for incorrect checksum to a CSV file. (currently inactive for performance - $ValidityStats)
 # CSV output is intended to be processed by Excel. See charts separately. 
 # Can be extended with further parsing of the telegrams. Currently it :
@@ -7,7 +7,7 @@
     # checks for current over a certain level and marks the record if above.
     # calculates power (kW) from the increment in the energy meter (kWh) and stores in a separate field. 
         # This is useful to validate whether the power reading is characteristic of the full 10 sec interval or just a transient spike.
-    # improves precision of current (A) readings based on the power (kW) fields (the current reading is truncated to integer which can be somewhat rectified)
+    # improves precision of current (A) readings based on the power (kW) and power factor (cos phi) fields (the current reading is truncated to integer)
 
 # It detects communication errors and fixes certain frequently occurring error types. 
         # Additional correctable errors could be added to the error correction capabilities. 
@@ -21,7 +21,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20260715.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
+$inpLog = "P1 meter w solar - 20260814.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
 ###########################################
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -93,9 +93,9 @@ class DSMRTelegramRecordType {
     [int]$Amp5                  # EON P1 truncates the reading to integer.
     [int]$Amp7                  # EON P1 truncates the reading to integer.
 
-    [float]$Amp3f                  # Current calculated from power and power factor
-    [float]$Amp5f                  # Current calculated from power and power factor
-    [float]$Amp7f                  # Current calculated from power and power factor
+    [float]$Amp3InF                  # Current calculated from power and power factor
+    [float]$Amp5InF                  # Current calculated from power and power factor
+    [float]$Amp7InF                  # Current calculated from power and power factor
 
     [float]$kWIn
     [float]$kWOut
@@ -666,9 +666,9 @@ switch -regex   ($_) {
                 $telegramRec.Amp5 = [int]::MinValue
                 $telegramRec.Amp7 = [int]::MinValue
 
-                $telegramRec.Amp3f = [float]::NaN
-                $telegramRec.Amp5f = [float]::NaN
-                $telegramRec.Amp7f = [float]::NaN
+                $telegramRec.Amp3InF = [float]::NaN
+                $telegramRec.Amp5InF = [float]::NaN
+                $telegramRec.Amp7InF = [float]::NaN
                 
                 $telegramRec.kWIn = [float]::MinValue
                 $telegramRec.kWOut = [float]::MinValue
@@ -800,13 +800,13 @@ switch -regex   ($_) {
     # P1 port Amper readings are truncated to integer and do not show the direction of the energy flow per phase. 
 
             if ($TelegramRec.kWIn3 -ne [float]::NaN ) {
-                $TelegramRec.Amp3f = 1000 * $TelegramRec.kWIn3 / $TelegramRec.CosPhi3 / $telegramRec.Voltage3
+                $TelegramRec.Amp3InF = 1000 * $TelegramRec.kWIn3 / $TelegramRec.CosPhi3 / $telegramRec.Voltage3
                 }
             if ($TelegramRec.kWIn5 -ne [float]::NaN ) {
-                $TelegramRec.Amp5f = 1000 * $TelegramRec.kWIn5 / $TelegramRec.CosPhi5 / $telegramRec.Voltage5
+                $TelegramRec.Amp5InF = 1000 * $TelegramRec.kWIn5 / $TelegramRec.CosPhi5 / $telegramRec.Voltage5
                 }
             if ($TelegramRec.kWIn7 -ne [float]::NaN ) {
-                $TelegramRec.Amp7f = 1000 * $TelegramRec.kWIn7 / $TelegramRec.CosPhi7 / $telegramRec.Voltage7 
+                $TelegramRec.Amp7InF = 1000 * $TelegramRec.kWIn7 / $TelegramRec.CosPhi7 / $telegramRec.Voltage7 
             }
 
 
@@ -929,7 +929,7 @@ if ($nTelegrams -ne 0 ) {
     }
 
 
-$telegramRecords | Export-Csv -Path ($outPath+"Records.csv") -NoTypeInformation -UseCulture -Encoding $PSenc     # this is the main output file with "_Records.csv" appended to the input file name
+$telegramRecords | Export-Csv -Path ($outPath+"Records.csv") -NoTypeInformation -UseCulture -Encoding $PSenc     # this is the main output file with "Records.csv" appended
 
 if ( $MaxVtime -and $MaxAtime ) {
     write-output ("Maximum voltage: " + $maxV +  " on date " + $MaxVtime.Substring(2,4) + " at " + $MaxVtime.substring(6,4) + ".  Max current: " + $maxA + " A on date " + $MaxAtime.Substring(2,4) + " at " + $MaxAtime.Substring(6,4))
