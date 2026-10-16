@@ -21,7 +21,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20260814.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
+$inpLog = "P1 meter w solar - 20261016.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
 ###########################################
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -378,7 +378,7 @@ switch -regex   ($_) {
                             #   $telegram fragment accumulated up to this point will be deleted when the next telegram starts (with "/")
                 }
 
-            $NonByteErrorMessage = "$timestamp, Byte conversion error found pre-telegram:  $($telegram.substring( 0, [Math]::Min(20, $telegram.Length ))) Removing leading garbage. "
+            $NonByteErrorMessage = "$timestamp, Byte conversion error found pre-telegram:  $(   ((   $telegram.substring( 0, [Math]::Min(20, $telegram.Length ))    -replace '\r\n', '<CRLF>') -replace '\n', '<LF>') -replace '\r', '<CR>'  ) Removing leading garbage. "
 
             # $global:nFixedCks++   # must not yet advance counter as the checksum is not yet revalidated after fix
 
