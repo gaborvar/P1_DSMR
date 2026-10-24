@@ -21,7 +21,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 20261016.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
+$inpLog = "P1 meter w solar - 202609*.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
 ###########################################
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -583,8 +583,8 @@ switch -regex   ($_) {
             WriteErrorRatePrediction
 
             if ( $NoisyChars ) {
-                if ($NChar.index -lt ($telegram.Length-6) ) {
-                    $errorlog += " before '" + $telegram.substring($NChar.index+1, 5)  +"'  " 
+                if ($NChar.index -lt ($telegram.Length-5) ) {
+                    $errorlog += " at '" + $telegram.substring([Math]::Max($NChar.index-3, 0), 6)  +"'  " 
                     }
                 }
                 else {
