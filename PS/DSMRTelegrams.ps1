@@ -21,7 +21,7 @@
 
 
 
-$inpLog = "P1 meter w solar - 202609*.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
+$inpLog = "P1 meter w solar - 20261026.log"   # This is the input file that holds the log of the full serial communication from the meter. Can include * wildcard to process all log files of a longer time window.
 ###########################################
 
 $nFixedCks = 0       # Count of corrected checksum errors
@@ -482,6 +482,23 @@ switch -regex   ($_) {
                 $errorlog += $timestamp + ", Fixed the first char of the service provider message OBIS code 0-0:96.13.0: changed back to '0' from space (x20)" + "  Len telegram: " + ($telegram.Length) + "`r`n"
                 $AccumulatedErrors = $true  # signals that at least one error was fixed in the telegram but not yet validated with checksum recalc. For future refinement of error handling code
             }
+
+            $oldtelegram = $telegram
+            $telegram = $telegram -replace "\)\r\n(.*?)1-0:73\.7\.0\(", ")`r`n1-0:73.7.0("        # (.*?) represents the chars that must not be there unless line noise occurred
+
+            if ($telegram.Length -ne $oldtelegram.Length) {     # better to check the length than the content of strings. Two different strings may test as equal if the difference is only some nonprinting chars
+                $wherr = " Removed characters before OBIS code '1-0:73.7.0'. Len telegram: $($oldtelegram.Length); after fix: $($telegram.Length).  "
+                $errorlog += $timestamp + ", Removed characters before code '1-0:73.7.0'. Len telegram was: " + ($oldtelegram.Length) + "   "
+                if ($oldtelegram.Length -ge 1100) {
+                    $wherr += "Before fix:  $( ( ($oldtelegram.substring(1080,20) -replace '\r\n', '<CRLF>') -replace '\n', '<LF>') -replace '\r', '<CR>')"
+                    $errorlog += $oldtelegram.substring(1080,15)
+                }
+                Write-Output ($wherr)
+                $errorlog += "`r`n"
+                $AccumulatedErrors = $true  # signals that at least one error was fixed in the telegram but not yet validated with checksum recalc. For future refinement of error handling code
+            }
+
+
 
             # Does the first line of the noisy telegram include a valid first line if the leading garbled bytes are disregarded? 
             # If so, it is likely that the line noise only affects the first byte of the dispatched telegram and the leading zero bytes. 
